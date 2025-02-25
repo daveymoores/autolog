@@ -320,7 +320,7 @@ impl Repository {
             // for each year insert the entry
             // if the value is empty, insert a new hashset, or insert a month into the hashset
             let date_time = DateTime::parse_from_rfc2822(&cap[0]);
-            let date = date_time.unwrap().date();
+            let date = date_time.unwrap().date_naive();
 
             let year = date.year();
             let month = date.month();
@@ -377,16 +377,15 @@ impl Repository {
         day: usize,
         entry: String,
     ) -> Result<Option<&Value>, Box<dyn std::error::Error>> {
-        let option = self
-            .timesheet
-            .as_ref()
-            .unwrap()
-            .get(year_string)
-            .and_then(|year| {
+        if let Some(timesheet) = self.timesheet.as_ref() {
+            let option = timesheet.get(year_string).and_then(|year| {
                 year.get(&*month_u32.to_string())
                     .and_then(|month| month[day - 1].get(&*entry))
             });
-        Ok(option)
+            Ok(option)
+        } else {
+            Err("Timesheet data not found".into())
+        }
     }
 
     pub fn update_hours_on_month_day_entry(
@@ -402,7 +401,7 @@ impl Repository {
 
         let is_weekend =
             match self.get_timesheet_entry(year_string, &month_u32, day, "weekend".to_string()) {
-                Ok(result) => result.cloned().unwrap(),
+                Ok(result) => result.unwrap(),
                 Err(err) => {
                     eprintln!("Error retrieving timesheet entry: {}", err);
                     process::exit(exitcode::DATAERR);

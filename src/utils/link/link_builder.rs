@@ -1,7 +1,6 @@
 use crate::data::client_repositories::{Approver, Client, ClientRepositories, User};
 use crate::data::repository::Repository;
 use crate::db;
-use crate::interface::help_prompt::RCClientRepositories;
 use crate::utils::date::date_parser::{check_for_valid_month, check_for_valid_year};
 use chrono::{DateTime, Month, Utc};
 use dotenv;
@@ -11,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::error::Error;
 use std::process;
-use std::rc::Rc;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct Timesheet {
@@ -97,13 +95,12 @@ fn calculate_total_hours(timesheet_month: &TimesheetHoursForMonth) -> f64 {
 }
 
 fn generate_timesheet_vec(
-    client_repositories: RCClientRepositories,
+    client_repositories: &mut ClientRepositories,
     options: Vec<Option<String>>,
     month_year_string: &String,
 ) -> Result<Vec<Timesheet>, Box<dyn Error>> {
     let mut timesheets: Vec<Timesheet> = vec![];
-    let client_repos = client_repositories.borrow_mut();
-    let repos_option = &client_repos.repositories;
+    let repos_option = &client_repositories.repositories;
     let repos = repos_option.as_ref().unwrap();
 
     // for each repo, find the specified timesheet month and push into vec
@@ -142,14 +139,12 @@ fn generate_timesheet_vec(
 }
 
 pub async fn build_unique_uri(
-    client_repositories: RCClientRepositories,
+    client_repositories: &mut ClientRepositories,
     options: Vec<Option<String>>,
 ) -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().ok();
     let month_year_string = get_string_month_year(&options[1], &options[2])?;
-    let timesheets =
-        generate_timesheet_vec(Rc::clone(&client_repositories), options, &month_year_string)?;
-    let client_repos = client_repositories.borrow_mut();
+    let timesheets = generate_timesheet_vec(client_repositories, options, &month_year_string)?;
 
     crate::interface::help_prompt::HelpPrompt::show_generating_timesheet_message(
         &month_year_string,
@@ -170,7 +165,7 @@ pub async fn build_unique_uri(
         &random_path,
         &month_year_string,
         &timesheets,
-        &client_repos,
+        &client_repositories,
     );
 
     // Check for existing index for TTL on the collection
@@ -226,8 +221,6 @@ mod test {
     use expect_test::expect_file;
     use nanoid::nanoid;
     use serde_json::json;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     #[test]
     fn it_generates_timesheet_vec() {
@@ -237,13 +230,13 @@ mod test {
             Option::from("2021".to_owned()),
         ];
 
-        let client_repository = ClientRepositories {
+        let mut client_repository = ClientRepositories {
             repositories: Option::from(vec![mocks::create_mock_repository()]),
             ..Default::default()
         };
 
         let timesheets = generate_timesheet_vec(
-            Rc::new(RefCell::new(client_repository)),
+            &mut client_repository,
             options,
             &"February, 2021".to_string(),
         )
@@ -286,7 +279,7 @@ mod test {
         }];
 
         let document = TimesheetDocument {
-            creation_date: Utc.ymd(2014, 11, 28).and_hms(12, 0, 9),
+            creation_date: Utc.with_ymd_and_hms(2014, 11, 28, 12, 0, 9).unwrap(),
             random_path: "fbfxhs".to_string(),
             month_year: "November, 2021".to_string(),
             client: client.clone(),
@@ -296,11 +289,11 @@ mod test {
         };
 
         let generated_document = build_document(
-            Utc.ymd(2014, 11, 28).and_hms(12, 0, 9),
+            Utc.with_ymd_and_hms(2014, 11, 28, 12, 0, 9).unwrap(),
             &"fbfxhs".to_string(),
             &"November, 2021".to_string(),
             &timesheets,
-            &Rc::new(RefCell::new(ClientRepositories {
+            &ClientRepositories {
                 client,
                 user,
                 approver,
@@ -308,8 +301,7 @@ mod test {
                     ..Default::default()
                 }]),
                 ..Default::default()
-            }))
-            .borrow_mut(),
+            },
         );
 
         assert_eq!(json!(generated_document), json!(document));

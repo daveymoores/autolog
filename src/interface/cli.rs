@@ -4,15 +4,11 @@ use crate::config::{Edit, Init, Link, List, Make, New, Remove, Update};
 use crate::data::client_repositories::ClientRepositories;
 use crate::data::repository;
 use crate::data::repository::Repository;
-use crate::interface::help_prompt::{ConfigurationDoc, HelpPrompt, RCClientRepositories};
+use crate::interface::help_prompt::{ConfigurationDoc, HelpPrompt};
 use crate::utils::file::file_reader;
 use chrono::prelude::*;
 use clap::{App, Arg, ArgMatches, Error};
-use std::cell::RefCell;
 use std::ffi::OsString;
-use std::rc::Rc;
-
-pub type RcHelpPrompt = Rc<RefCell<HelpPrompt>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Commands {
@@ -276,51 +272,35 @@ impl Cli<'_> {
     }
 
     pub fn run(&self) -> Result<(), clap::Error> {
-        //TODO - curry these into check_for_config_file
-        let config: config::Config = config::Config::new();
-        let repository = Rc::new(RefCell::new(repository::Repository::new()));
-        let client_repositories = Rc::new(RefCell::new(ClientRepositories::new()));
+        let mut config: config::Config = config::Config::new();
+        let mut repository = repository::Repository::new();
+        let mut client_repositories = ClientRepositories::new();
         let matches = &self.matches;
         let cli: Cli = self.parse_commands(matches)?;
 
         // pass the path for init so that I already know it if user is being onboarded
-        match &cli.command {
-            Some(command) => {
-                if command == &Commands::Init {
-                    repository
-                        .borrow_mut()
-                        .set_repo_path(cli.options[0].clone().unwrap());
-                }
+        if let Some(Commands::Init) = &cli.command {
+            if let Some(path) = cli.options.get(0).and_then(|path| path.clone()) {
+                repository.set_repo_path(path);
             }
-            None => {}
         }
 
-        let prompt = crate::interface::help_prompt::HelpPrompt::new(
-            Rc::clone(&repository),
-            Rc::clone(&client_repositories),
+        let mut prompt = crate::interface::help_prompt::HelpPrompt::new(
+            &mut repository,
+            &mut client_repositories,
         );
-        let rc_prompt: RcHelpPrompt = Rc::new(RefCell::new(prompt));
 
         let deserialized_config: ConfigurationDoc = vec![];
 
-        Self::run_command(
-            cli,
-            config,
-            &repository,
-            &client_repositories,
-            &rc_prompt,
-            deserialized_config,
-        );
+        Self::run_command(cli, &mut config, &mut prompt, deserialized_config);
 
         Ok(())
     }
 
     pub fn run_command<T>(
         cli: Cli<'_>,
-        config: T,
-        repository: &Rc<RefCell<repository::Repository>>,
-        client_repositories: &RCClientRepositories,
-        prompt: &RcHelpPrompt,
+        config: &mut T,
+        prompt: &mut HelpPrompt,
         mut deserialized_config: ConfigurationDoc,
     ) where
         T: Init + Make + Edit + Update + Remove + List + Link,
@@ -330,42 +310,12 @@ impl Cli<'_> {
                 panic!("The programme shouldn't be able to get here");
             }
             Some(commands) => match commands {
-                Commands::Init => config.init(
-                    cli.options,
-                    Rc::clone(repository),
-                    Rc::clone(client_repositories),
-                    Rc::clone(prompt),
-                ),
-                Commands::Make => config.make(
-                    cli.options,
-                    Rc::clone(repository),
-                    Rc::clone(client_repositories),
-                    Rc::clone(prompt),
-                ),
-                Commands::Edit => config.edit(
-                    cli.options,
-                    Rc::clone(repository),
-                    Rc::clone(client_repositories),
-                    Rc::clone(prompt),
-                ),
-                Commands::Remove => config.remove(
-                    cli.options,
-                    Rc::clone(repository),
-                    Rc::clone(client_repositories),
-                    Rc::clone(prompt),
-                    &mut deserialized_config,
-                ),
-                Commands::Update => config.update(
-                    cli.options,
-                    Rc::clone(repository),
-                    Rc::clone(client_repositories),
-                    Rc::clone(prompt),
-                ),
-                Commands::List => config.list(
-                    Rc::clone(repository),
-                    Rc::clone(client_repositories),
-                    Rc::clone(prompt),
-                ),
+                Commands::Init => config.init(cli.options, prompt),
+                Commands::Make => config.make(cli.options, prompt),
+                Commands::Edit => config.edit(cli.options, prompt),
+                Commands::Remove => config.remove(cli.options, prompt, &mut deserialized_config),
+                Commands::Update => config.update(cli.options, prompt),
+                Commands::List => config.list(prompt),
                 Commands::Link => config.link(cli.options),
             },
         }
@@ -377,7 +327,6 @@ mod tests {
     use super::*;
     use crate::config::{New, Remove};
     use crate::data::repository::Repository;
-    use crate::interface::help_prompt::RCRepository;
     use std::fmt::Debug;
     use std::str::FromStr;
 
@@ -395,7 +344,7 @@ mod tests {
             .collect()
     }
 
-    fn call_command_from_mock_config<I, T, K>(commands: I, mock_config: K)
+    fn call_command_from_mock_config<I, T, K>(commands: I, mut mock_config: K)
     where
         I: Iterator<Item = T>,
         T: Into<OsString> + Clone,
@@ -405,26 +354,17 @@ mod tests {
         let new_cli = cli.parse_commands(&cli.matches);
         let response = new_cli.unwrap();
 
-        let repository = Rc::new(RefCell::new(Repository::new()));
-        let client_repositories = Rc::new(RefCell::new(ClientRepositories::new()));
+        let mut repository = Repository::new();
+        let mut client_repositories = ClientRepositories::new();
 
-        let prompt = crate::interface::help_prompt::HelpPrompt::new(
-            Rc::clone(&repository),
-            Rc::clone(&client_repositories),
+        let mut prompt = crate::interface::help_prompt::HelpPrompt::new(
+            &mut repository,
+            &mut client_repositories,
         );
-
-        let rc_prompt = Rc::new(RefCell::new(prompt));
 
         let deserialized_config: ConfigurationDoc = vec![];
 
-        Cli::run_command(
-            response,
-            mock_config,
-            &repository,
-            &client_repositories,
-            &rc_prompt,
-            deserialized_config,
-        );
+        Cli::run_command(response, &mut mock_config, &mut prompt, deserialized_config);
     }
 
     struct MockConfig {}
@@ -434,49 +374,25 @@ mod tests {
         }
     }
     impl Init for MockConfig {
-        fn init(
-            &self,
-            _options: Vec<Option<String>>,
-            _repository: RCRepository,
-            _client_repositories: RCClientRepositories,
-            _prompt: RcHelpPrompt,
-        ) {
+        fn init(&self, _options: Vec<Option<String>>, _prompt: &mut HelpPrompt) {
             assert!(true);
         }
     }
 
     impl Edit for MockConfig {
-        fn edit(
-            &self,
-            _options: Vec<Option<String>>,
-            _repository: Rc<RefCell<Repository>>,
-            _client_repositories: RCClientRepositories,
-            _prompt: RcHelpPrompt,
-        ) {
+        fn edit(&self, _options: Vec<Option<String>>, _prompt: &mut HelpPrompt) {
             assert!(true);
         }
     }
 
     impl Make for MockConfig {
-        fn make(
-            &self,
-            _options: Vec<Option<String>>,
-            _repository: Rc<RefCell<Repository>>,
-            _client_repositories: RCClientRepositories,
-            _prompt: RcHelpPrompt,
-        ) {
+        fn make(&self, _options: Vec<Option<String>>, _prompt: &mut HelpPrompt) {
             assert!(true);
         }
     }
 
     impl Update for MockConfig {
-        fn update(
-            &self,
-            _options: Vec<Option<String>>,
-            _repository: Rc<RefCell<Repository>>,
-            _client_repositories: RCClientRepositories,
-            _prompt: RcHelpPrompt,
-        ) {
+        fn update(&self, _options: Vec<Option<String>>, _prompt: &mut HelpPrompt) {
             assert!(true);
         }
     }
@@ -485,9 +401,7 @@ mod tests {
         fn remove(
             &self,
             _options: Vec<Option<String>>,
-            _repository: Rc<RefCell<Repository>>,
-            _client_repositories: RCClientRepositories,
-            _prompt: RcHelpPrompt,
+            _prompt: &mut HelpPrompt,
             _deserialized_config: &mut ConfigurationDoc,
         ) {
             assert!(true);
@@ -495,12 +409,7 @@ mod tests {
     }
 
     impl List for MockConfig {
-        fn list(
-            &self,
-            _repository: RCRepository,
-            _client_repositories: RCClientRepositories,
-            _prompt: RcHelpPrompt,
-        ) {
+        fn list(&self, _prompt: &mut HelpPrompt) {
             assert!(true);
         }
     }

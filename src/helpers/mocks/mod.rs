@@ -4,12 +4,11 @@ use crate::data::repository::{GitLogDates, Repository};
 use crate::utils::date::date_parser::{get_timesheet_map_from_date_hashmap, TimesheetYears};
 use crate::utils::link::link_builder::TimesheetHoursForMonth;
 use serde_json::{Map, Number, Value};
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 #[cfg(test)]
 pub fn create_mock_client_repository(client_repository: &mut ClientRepositories) {
-    let repo = RefCell::new(Repository {
+    let mut repo = Repository {
         client_name: Option::from("alphabet".to_string()),
         client_address: Option::from("Spaghetti Way, USA".to_string()),
         client_contact_person: Option::from("John Smith".to_string()),
@@ -17,9 +16,9 @@ pub fn create_mock_client_repository(client_repository: &mut ClientRepositories)
         email: Option::from("jim@jones.com".to_string()),
         namespace: Option::from("autolog".to_string()),
         ..Default::default()
-    });
+    };
 
-    client_repository.set_values(repo.borrow());
+    client_repository.set_values(&mut repo);
 }
 
 #[cfg(test)]

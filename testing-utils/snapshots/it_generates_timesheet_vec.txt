@@ -3,345 +3,159 @@ Some(
         namespace: "autolog",
         timesheet: [
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    true,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(true),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    true,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(true),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    true,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(true),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    true,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(true),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    true,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(true),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    true,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(true),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    8.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(8.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    8.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(8.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    true,
-                ),
-                "hours": Number(
-                    8.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(true),
+                "hours": Number(8.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    true,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(true),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    false,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(false),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    true,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(true),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
             {
-                "weekend": Bool(
-                    true,
-                ),
-                "hours": Number(
-                    0.0,
-                ),
-                "user_edited": Bool(
-                    false,
-                ),
+                "weekend": Bool(true),
+                "hours": Number(0.0),
+                "user_edited": Bool(false),
             },
         ],
         total_hours: 24.0,

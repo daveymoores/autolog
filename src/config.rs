@@ -1,7 +1,7 @@
 use crate::data::client_repositories::ClientRepositories;
 use crate::data::repository::Repository;
-use crate::interface::cli::RcHelpPrompt;
-use crate::interface::help_prompt::{ConfigurationDoc, RCClientRepositories, RCRepository};
+use crate::interface::help_prompt::ConfigurationDoc;
+use crate::interface::help_prompt::HelpPrompt;
 use crate::utils;
 use crate::utils::exit_process;
 use crate::utils::file::file_reader;
@@ -9,11 +9,8 @@ use crate::utils::link::link_builder;
 extern crate google_calendar3 as calendar3;
 use calendar3::{hyper, hyper_rustls, oauth2};
 use dirs::home_dir;
-use std::cell::{Ref, RefMut};
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::process;
-use std::rc::Rc;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
@@ -38,13 +35,13 @@ impl Config {
     fn update_client_repositories(
         new_client_repos: &mut ConfigurationDoc,
         deserialized_config: ConfigurationDoc,
-        old_client_repos: Ref<ClientRepositories>,
+        prompt: &mut HelpPrompt,
     ) {
-        let client_id = old_client_repos.get_client_id();
+        let client_id = prompt.client_repositories().get_client_id();
 
         for item in &deserialized_config {
             if item.get_client_id() == client_id {
-                new_client_repos.push(old_client_repos.deref().clone())
+                new_client_repos.push(prompt.client_repositories().clone())
             } else {
                 new_client_repos.push(item.clone())
             }
@@ -52,15 +49,14 @@ impl Config {
     }
 
     fn push_found_values_into_rcs(
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
+        prompt: &mut HelpPrompt,
         found_repo: Option<&Repository>,
         found_client_repo: Option<&ClientRepositories>,
     ) {
         // ...and fetch a new batch of interaction data
         if let Some(found_client_repo) = found_client_repo {
-            client_repositories
-                .borrow_mut()
+            prompt
+                .client_repositories()
                 .set_values_from_buffer(found_client_repo)
                 .exec_generate_timesheets_from_git_history()
                 .compare_logs_and_set_timesheets();
@@ -68,13 +64,13 @@ impl Config {
 
         // if it's been found, set the working repo to the timesheet struct as it may be operated on
         if let Some(found_repo) = found_repo {
-            repository.borrow_mut().set_values_from_buffer(found_repo);
+            prompt.repository().set_values_from_buffer(found_repo);
         }
     }
 
     fn fetch_interaction_data(
-        mut client_repositories: RefMut<ClientRepositories>,
-        repository: Ref<Repository>,
+        client_repositories: &mut ClientRepositories,
+        repository: &mut Repository,
     ) {
         client_repositories
             .set_values(repository)
@@ -84,7 +80,7 @@ impl Config {
 
     /// Find and update client if sheet exists, otherwise write a new one
     fn write_to_config_file(
-        client_repositories: Option<RCClientRepositories>,
+        client_repositories: Option<&mut ClientRepositories>,
         deserialized_config: Option<&mut ConfigurationDoc>,
     ) {
         // get path for where to write the config file
@@ -141,18 +137,24 @@ impl Config {
         // if a client name is passed, get ClientRepositories from that
         // if this is true, repo_path and repo_namespace will be None
         if let Some(c) = client_name {
+            let mut found = false;
             for i in 0..deserialized_config.len() {
-                if deserialized_config[i].get_client_name().to_lowercase()
-                    == c.to_owned().to_lowercase()
-                {
-                    option = (Option::None, Option::from(&deserialized_config[i]));
-                } else if i == &deserialized_config.len() - 1 {
-                    //TODO - if the client is passed but not found
-                    //TODO - it would be good to give options - i.e list of clients, and list of repos
-                    eprintln!(
-                        "The client, or client + namespace combination you passed has not be found.");
-                    std::process::exit(exitcode::CANTCREAT);
+                if let Some(client) = deserialized_config[i].get_client_name() {
+                    if client.to_lowercase() == c.to_owned().to_lowercase() {
+                        option = (Option::None, Option::from(&deserialized_config[i]));
+                        found = true;
+                        break;
+                    }
                 }
+            }
+
+            if !found {
+                //TODO - if the client is passed but not found
+                //TODO - it would be good to give options - i.e list of clients, and list of repos
+                eprintln!(
+                    "The client, or client + namespace combination you passed has not be found."
+                );
+                std::process::exit(exitcode::CANTCREAT);
             }
         } else {
             // otherwise check whether any clients contain the namespace
@@ -176,25 +178,23 @@ impl Config {
         Ok(option)
     }
 
-    fn check_for_config_file(
-        self,
-        buffer: &mut String,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
-    ) {
+    fn check_for_config_file(self, buffer: &mut String, prompt: &mut HelpPrompt) {
         // pass a prompt for if the config file doesn't exist
-        crate::utils::file::file_reader::read_data_from_config_file(buffer, prompt.clone())
-            .unwrap_or_else(|err| {
+        crate::utils::file::file_reader::read_data_from_config_file(buffer, prompt).unwrap_or_else(
+            |err| {
                 eprintln!("Error initialising autolog: {}", err);
                 std::process::exit(exitcode::CANTCREAT);
-            });
+            },
+        );
+
+        let mut repository = prompt.repository().clone();
+        let mut client_repositories = prompt.client_repositories().clone();
 
         // if the buffer is empty, there is no existing file, user has been onboarded
         // and Repository state holds the data. Write this data to file.
         if buffer.is_empty() {
-            Config::fetch_interaction_data(client_repositories.borrow_mut(), repository.borrow());
-            Config::write_to_config_file(Option::Some(client_repositories), None);
+            Config::fetch_interaction_data(&mut client_repositories, &mut repository);
+            Config::write_to_config_file(Option::Some(&mut client_repositories), None);
             crate::interface::help_prompt::HelpPrompt::show_write_new_config_success();
         }
     }
@@ -239,31 +239,14 @@ impl Config {
 
 pub trait Init {
     /// Generate a config file with user variables
-    fn init(
-        &self,
-        options: Vec<Option<String>>,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
-    );
+    fn init(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt);
 }
 
 impl Init for Config {
-    fn init(
-        &self,
-        options: Vec<Option<String>>,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
-    ) {
+    fn init(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
         // try to read config file. Write a new one if it doesn't exist
         let mut buffer = String::new();
-        self.check_for_config_file(
-            &mut buffer,
-            Rc::clone(&repository),
-            Rc::clone(&client_repositories),
-            Rc::clone(&prompt),
-        );
+        self.check_for_config_file(&mut buffer, prompt);
 
         // ..if the there is an existing config file, check whether the (passed path or namespace) repository exists under any clients
         // if it does pass Repository values to Repository
@@ -289,20 +272,19 @@ impl Init for Config {
                 // Otherwise onboard them and check whether (passed path or namespace) repo
                 // should exist under an existing client
                 prompt
-                    .borrow_mut()
                     .prompt_for_client_then_onboard(&mut deserialized_config)
                     .unwrap_or_else(|err| {
                         eprintln!("Error adding repository to client: {}", err);
                         std::process::exit(exitcode::CANTCREAT);
                     });
 
+                let mut client_repositories = prompt.client_repositories().clone();
+                let mut repository = prompt.repository().clone();
+
                 // ...and fetch a new batch of interaction data
-                Config::fetch_interaction_data(
-                    client_repositories.borrow_mut(),
-                    repository.borrow(),
-                );
+                Config::fetch_interaction_data(&mut client_repositories, &mut repository);
                 Config::write_to_config_file(
-                    Option::Some(client_repositories),
+                    Option::Some(&mut client_repositories),
                     Option::from(&mut deserialized_config),
                 );
 
@@ -314,34 +296,17 @@ impl Init for Config {
 
 pub trait Make {
     /// Edit a day entry within the repository
-    fn make(
-        &self,
-        options: Vec<Option<String>>,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
-    );
+    fn make(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt);
 }
 
 impl Make for Config {
     #[tokio::main]
-    async fn make(
-        &self,
-        options: Vec<Option<String>>,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
-    ) {
+    async fn make(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
         // try to read config file. Write a new one if it doesn't exist
         let mut buffer = String::new();
         let current_repo_path = file_reader::get_canonical_path(".");
 
-        self.check_for_config_file(
-            &mut buffer,
-            Rc::clone(&repository),
-            Rc::clone(&client_repositories),
-            prompt.clone(),
-        );
+        self.check_for_config_file(&mut buffer, prompt);
 
         if crate::utils::config_file_found(&mut buffer) {
             let mut deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
@@ -359,16 +324,10 @@ impl Make for Config {
                     std::process::exit(exitcode::DATAERR);
                 });
 
-            Self::push_found_values_into_rcs(
-                Rc::clone(&repository),
-                Rc::clone(&client_repositories),
-                found_repo,
-                found_client_repo,
-            );
+            Self::push_found_values_into_rcs(prompt, found_repo, found_client_repo);
 
             if found_client_repo.is_some() {
                 prompt
-                    .borrow_mut()
                     .add_project_numbers()
                     .unwrap_or_else(|err| {
                         eprintln!("Error parsing project number: {}", err);
@@ -381,7 +340,7 @@ impl Make for Config {
                     });
 
                 // generate autolog.dev link using existing config
-                link_builder::build_unique_uri(Rc::clone(&client_repositories), options)
+                link_builder::build_unique_uri(prompt.client_repositories(), options)
                     .await
                     .unwrap_or_else(|err| {
                         eprintln!("Error building unique link: {}", err);
@@ -389,7 +348,7 @@ impl Make for Config {
                     });
 
                 Config::write_to_config_file(
-                    Option::Some(client_repositories),
+                    Option::Some(prompt.client_repositories()),
                     Option::Some(&mut deserialized_config),
                 );
             } else {
@@ -401,31 +360,14 @@ impl Make for Config {
 
 pub trait Edit {
     /// Generate a config file with user variables
-    fn edit(
-        &self,
-        options: Vec<Option<String>>,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
-    );
+    fn edit(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt);
 }
 
 impl Edit for Config {
-    fn edit(
-        &self,
-        options: Vec<Option<String>>,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
-    ) {
+    fn edit(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
         // try to read config file. Write a new one if it doesn't exist
         let mut buffer = String::new();
-        self.check_for_config_file(
-            &mut buffer,
-            Rc::clone(&repository),
-            Rc::clone(&client_repositories),
-            Rc::clone(&prompt),
-        );
+        self.check_for_config_file(&mut buffer, prompt);
 
         if crate::utils::config_file_found(&mut buffer) {
             let mut deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
@@ -443,34 +385,30 @@ impl Edit for Config {
                     std::process::exit(exitcode::DATAERR);
                 });
 
-            Self::push_found_values_into_rcs(
-                Rc::clone(&repository),
-                Rc::clone(&client_repositories),
-                found_repo,
-                found_client_repo,
-            );
+            Self::push_found_values_into_rcs(prompt, found_repo, found_client_repo);
 
             if found_client_repo.is_some() {
-                repository
-                    .borrow_mut()
+                prompt
+                    .repository()
                     .update_hours_on_month_day_entry(&options)
                     .unwrap_or_else(|err| {
                         eprintln!("Error editing timesheet: {}", err);
                         process::exit(exitcode::DATAERR);
                     });
 
-                client_repositories
-                    .borrow_mut()
-                    .set_values(repository.borrow())
+                let mut repository_clone = prompt.repository().clone();
+
+                prompt
+                    .client_repositories()
+                    .set_values(&mut repository_clone)
                     .exec_generate_timesheets_from_git_history()
                     .compare_logs_and_set_timesheets();
 
-                let client_borrow = client_repositories.borrow();
                 let mut new_client_repos: ConfigurationDoc = vec![];
                 Self::update_client_repositories(
                     &mut new_client_repos,
                     deserialized_config,
-                    client_borrow,
+                    prompt,
                 );
 
                 Config::write_to_config_file(None, Option::Some(&mut new_client_repos));
@@ -487,9 +425,7 @@ pub trait Remove {
     fn remove(
         &self,
         options: Vec<Option<String>>,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
+        prompt: &mut HelpPrompt,
         deserialized_config: &mut ConfigurationDoc,
     );
 }
@@ -498,19 +434,12 @@ impl Remove for Config {
     fn remove(
         &self,
         options: Vec<Option<String>>,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
+        prompt: &mut HelpPrompt,
         deserialized_config: &mut ConfigurationDoc,
     ) {
         // try to read config file. Write a new one if it doesn't exist
         let mut buffer = String::new();
-        self.check_for_config_file(
-            &mut buffer,
-            Rc::clone(&repository),
-            Rc::clone(&client_repositories),
-            Rc::clone(&prompt),
-        );
+        self.check_for_config_file(&mut buffer, prompt);
 
         // Find repo or client and remove them from config file
         if crate::utils::config_file_found(&mut buffer) {
@@ -535,7 +464,6 @@ impl Remove for Config {
 
             if found_client_repo.is_some() {
                 prompt
-                    .borrow_mut()
                     .prompt_for_client_repo_removal(options, deserialized_config)
                     .expect("Remove failed");
 
@@ -560,31 +488,14 @@ impl Remove for Config {
 
 pub trait Update {
     /// Update client or repository details
-    fn update(
-        &self,
-        options: Vec<Option<String>>,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
-    );
+    fn update(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt);
 }
 
 impl Update for Config {
-    fn update(
-        &self,
-        options: Vec<Option<String>>,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
-    ) {
+    fn update(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
         // try to read config file. Write a new one if it doesn't exist
         let mut buffer = String::new();
-        self.check_for_config_file(
-            &mut buffer,
-            Rc::clone(&repository),
-            Rc::clone(&client_repositories),
-            Rc::clone(&prompt),
-        );
+        self.check_for_config_file(&mut buffer, prompt);
 
         if crate::utils::config_file_found(&mut buffer) {
             let mut deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
@@ -602,25 +513,16 @@ impl Update for Config {
                     std::process::exit(exitcode::DATAERR);
                 });
 
-            Self::push_found_values_into_rcs(
-                Rc::clone(&repository),
-                Rc::clone(&client_repositories),
-                found_repo,
-                found_client_repo,
-            );
+            Self::push_found_values_into_rcs(prompt, found_repo, found_client_repo);
 
             if found_client_repo.is_some() {
-                prompt
-                    .borrow_mut()
-                    .prompt_for_update(options)
-                    .expect("Update failed");
+                prompt.prompt_for_update(options).expect("Update failed");
 
-                let client_borrow = client_repositories.borrow();
                 let mut new_client_repos = vec![];
                 Self::update_client_repositories(
                     &mut new_client_repos,
                     deserialized_config,
-                    client_borrow,
+                    prompt,
                 );
 
                 // pass modified config as new client_repository and thus write it straight to file
@@ -635,35 +537,20 @@ impl Update for Config {
 
 pub trait List {
     /// List repositories under each client
-    fn list(
-        &self,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
-    );
+    fn list(&self, prompt: &mut HelpPrompt);
 }
 
 impl List for Config {
-    fn list(
-        &self,
-        repository: RCRepository,
-        client_repositories: RCClientRepositories,
-        prompt: RcHelpPrompt,
-    ) {
+    fn list(&self, prompt: &mut HelpPrompt) {
         // try to read config file. Write a new one if it doesn't exist
         let mut buffer = String::new();
-        self.check_for_config_file(
-            &mut buffer,
-            Rc::clone(&repository),
-            Rc::clone(&client_repositories),
-            Rc::clone(&prompt),
-        );
+        self.check_for_config_file(&mut buffer, prompt);
 
         if crate::utils::config_file_found(&mut buffer) {
             let deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
                 .expect("Initialisation of ClientRepository struct from buffer failed");
 
-            prompt.borrow().list_clients_and_repos(deserialized_config);
+            prompt.list_clients_and_repos(deserialized_config);
         }
     }
 }
@@ -746,9 +633,7 @@ mod tests {
     use envtestkit::lock::lock_test;
     use envtestkit::set_env;
     use serde_json::{Number, Value};
-    use std::cell::RefCell;
     use std::ffi::OsString;
-    use std::rc::Rc;
 
     #[test]
     fn it_modifies_the_hour_entry_in_a_client_repository_day_entry() {
@@ -764,46 +649,34 @@ mod tests {
             Option::from("2021".to_string()),
         ];
 
-        let client_repos = Rc::new(RefCell::new(ClientRepositories {
+        let mut client_repos = ClientRepositories {
             ..Default::default()
-        }));
+        };
 
-        let repo = Rc::new(RefCell::new(Repository {
+        let mut repo = Repository {
             ..Default::default()
-        }));
+        };
 
-        let prompt = Rc::new(RefCell::new(
-            crate::interface::help_prompt::HelpPrompt::new(
-                Rc::clone(&repo),
-                Rc::clone(&client_repos),
-            ),
-        ));
+        let mut prompt =
+            crate::interface::help_prompt::HelpPrompt::new(&mut repo, &mut client_repos);
 
-        config.edit(
-            options,
-            Rc::clone(&repo),
-            Rc::clone(&client_repos),
-            Rc::clone(&prompt),
-        );
+        config.edit(options, &mut prompt);
 
-        let repo_borrow = repo.borrow();
-
-        let month = repo_borrow
+        let month = prompt
+            .repository()
             .timesheet
             .as_ref()
             .unwrap()
             .get("2021")
-            .as_ref()
             .unwrap()
             .get("11")
-            .as_ref()
             .unwrap()
             .clone();
 
-        let hour_value = month[0].get("hours").as_ref().unwrap().clone();
-        let edited_value = month[0].get("user_edited").as_ref().unwrap().clone();
+        let hour_value = month[0].get("hours").unwrap().to_string();
+        let edited_value = month[0].get("user_edited").unwrap();
 
-        assert_eq!(hour_value, &Value::Number(Number::from_f64(20.0).unwrap()));
+        assert_eq!(hour_value, Number::from_f64(20.0).unwrap().to_string());
         assert_eq!(edited_value, &Value::Bool(true));
     }
 
@@ -834,26 +707,19 @@ mod tests {
             Option::from(namespace.clone()),
         ];
 
-        let client_repos = Rc::new(RefCell::new(ClientRepositories {
+        let mut client_repos = ClientRepositories {
             ..Default::default()
-        }));
+        };
 
-        let repo = Rc::new(RefCell::new(Repository {
+        let mut repo = Repository {
             ..Default::default()
-        }));
+        };
 
-        let prompt = Rc::new(RefCell::new(
-            crate::interface::help_prompt::HelpPrompt::new(
-                Rc::clone(&repo),
-                Rc::clone(&client_repos),
-            ),
-        ));
+        let mut prompt =
+            crate::interface::help_prompt::HelpPrompt::new(&mut repo, &mut client_repos);
 
-        crate::utils::file::file_reader::read_data_from_config_file(
-            &mut buffer,
-            Rc::clone(&prompt),
-        )
-        .expect("Read of test data failed");
+        crate::utils::file::file_reader::read_data_from_config_file(&mut buffer, &mut prompt)
+            .expect("Read of test data failed");
 
         let before_deserialized_config: ConfigurationDoc = serde_json::from_str(&mut buffer)
             .expect("Initialisation of ClientRepository struct from buffer failed");
@@ -866,13 +732,7 @@ mod tests {
         // internally this will find the same test config file as above
         let mut after_deserialized_config: ConfigurationDoc = vec![];
 
-        config.remove(
-            options,
-            Rc::clone(&repo),
-            Rc::clone(&client_repos),
-            Rc::clone(&prompt),
-            &mut after_deserialized_config,
-        );
+        config.remove(options, &mut prompt, &mut after_deserialized_config);
 
         assert_eq!(
             is_repo_in_deserialized_config(&after_deserialized_config, &namespace),
@@ -890,26 +750,19 @@ mod tests {
         let config = Config::new();
         let options = vec![Option::from(client.clone()), Option::None];
 
-        let client_repos = Rc::new(RefCell::new(ClientRepositories {
+        let mut client_repos = ClientRepositories {
             ..Default::default()
-        }));
+        };
 
-        let repo = Rc::new(RefCell::new(Repository {
+        let mut repo = Repository {
             ..Default::default()
-        }));
+        };
 
-        let prompt = Rc::new(RefCell::new(
-            crate::interface::help_prompt::HelpPrompt::new(
-                Rc::clone(&repo),
-                Rc::clone(&client_repos),
-            ),
-        ));
+        let mut prompt =
+            crate::interface::help_prompt::HelpPrompt::new(&mut repo, &mut client_repos);
 
-        crate::utils::file::file_reader::read_data_from_config_file(
-            &mut buffer,
-            Rc::clone(&prompt),
-        )
-        .expect("Read of test data failed");
+        crate::utils::file::file_reader::read_data_from_config_file(&mut buffer, &mut prompt)
+            .expect("Read of test data failed");
 
         let before_deserialized_config: ConfigurationDoc = serde_json::from_str(&mut buffer)
             .expect("Initialisation of ClientRepository struct from buffer failed");
@@ -922,13 +775,7 @@ mod tests {
         // internally this will find the same test config file as above
         let mut after_deserialized_config: ConfigurationDoc = vec![];
 
-        config.remove(
-            options,
-            Rc::clone(&repo),
-            Rc::clone(&client_repos),
-            Rc::clone(&prompt),
-            &mut after_deserialized_config,
-        );
+        config.remove(options, &mut prompt, &mut after_deserialized_config);
 
         assert_eq!(
             is_client_in_deserialized_config(&after_deserialized_config, &client),
