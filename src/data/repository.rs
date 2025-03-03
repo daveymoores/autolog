@@ -6,6 +6,7 @@ use chrono::{DateTime, Datelike};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::process;
 use std::process::{Command, Output};
 
@@ -107,7 +108,12 @@ impl Repository {
     }
 
     pub fn set_repo_path(&mut self, value: String) -> &mut Self {
-        self.repo_path = Option::from(value);
+        let canonical_path = fs::canonicalize(&value).unwrap_or_else(|err| {
+            eprintln!("Error resolving path: {}", err);
+            std::process::exit(exitcode::CANTCREAT);
+        });
+
+        self.repo_path = Some(canonical_path.to_string_lossy().into_owned());
         self
     }
 
