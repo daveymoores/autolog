@@ -1,13 +1,10 @@
 use crate::data::client_repositories::ClientRepositories;
-use crate::interface::help_prompt::{ConfigurationDoc, Onboarding, RCClientRepositories};
+use crate::interface::help_prompt::{ConfigurationDoc, Onboarding};
 use crate::utils::is_test_mode;
 use serde_json::json;
-use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::ops::Deref;
 use std::path::PathBuf;
-use std::rc::Rc;
 use tempfile::tempfile;
 
 const CONFIG_FILE_NAME: &str = ".autolog.txt";
@@ -35,7 +32,7 @@ pub fn get_filepath(path: PathBuf) -> Result<String, Box<dyn std::error::Error>>
 fn read_file<T>(
     buffer: &mut String,
     path: &str,
-    prompt: Rc<RefCell<T>>,
+    prompt: &mut T,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Onboarding,
@@ -45,7 +42,7 @@ where
             file.read_to_string(buffer)?;
         }
         Err(_) => {
-            prompt.borrow_mut().onboarding(true)?;
+            prompt.onboarding(true)?;
         }
     };
 
@@ -54,7 +51,7 @@ where
 
 pub fn read_data_from_config_file<T>(
     buffer: &mut String,
-    prompt: Rc<RefCell<T>>,
+    prompt: &mut T,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Onboarding,
@@ -95,7 +92,7 @@ pub fn write_json_to_config_file(
 }
 
 pub fn serialize_config(
-    client_repositories: Option<RCClientRepositories>,
+    client_repositories: Option<&mut ClientRepositories>,
     deserialized_config: Option<&mut ConfigurationDoc>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let config_data = match deserialized_config {
@@ -105,8 +102,8 @@ pub fn serialize_config(
                 eprintln!("Tried to create a JSON literal but nothing was passed");
                 std::process::exit(exitcode::DATAERR);
             }
-            Some(rc_client_repo) => {
-                json!(vec![rc_client_repo.deref()])
+            Some(client_repo) => {
+                json!(vec![client_repo])
             }
         },
         // if it does exist, lets add it to the existing client repositories, or
@@ -114,25 +111,24 @@ pub fn serialize_config(
         Some(config) => {
             match client_repositories {
                 None => json!(config),
-                Some(ref client_repos) => {
+                Some(client_repos) => {
                     // get the values from the current repo so that it can be merged back into the config
                     // if deserialized_config is none, there is only one value in the vec so we can safely pull it out
-                    let client_repo_borrow = client_repos.borrow_mut();
-                    let client = client_repo_borrow.client.clone();
-                    let user = client_repo_borrow.user.clone();
-                    let approver = client_repo_borrow.approver.clone();
-                    let repository = client_repo_borrow.repositories.as_ref().unwrap()[0].clone();
+                    let client = client_repos.client.clone();
+                    let user = client_repos.user.clone();
+                    let approver = client_repos.approver.clone();
+                    let repository = client_repos.repositories.as_ref().unwrap()[0].clone();
                     let client_name = &client.as_ref().unwrap().client_name;
-                    let requires_approval = client_repo_borrow.requires_approval;
+                    let requires_approval = client_repos.requires_approval;
 
                     let config_data: ConfigurationDoc = if config
                         .iter_mut()
-                        .any(|x| &x.get_client_name() == client_name)
+                        .any(|x| &x.get_client_name().unwrap() == client_name)
                     {
                         let x: ConfigurationDoc = config
                             .iter_mut()
                             .map(|c| {
-                                if &c.get_client_name() == client_name {
+                                if &c.get_client_name().unwrap() == client_name {
                                     return ClientRepositories {
                                         requires_approval,
                                         approver: approver.clone(),
@@ -154,7 +150,7 @@ pub fn serialize_config(
 
                         x
                     } else {
-                        config.push(client_repo_borrow.clone());
+                        config.push(client_repos.clone());
                         config.to_vec()
                     };
 
@@ -185,7 +181,6 @@ mod tests {
     use envtestkit::lock::lock_test;
     use envtestkit::set_env;
     use nanoid::nanoid;
-    use std::cell::RefCell;
     use std::error::Error;
     use std::ffi::OsString;
     use std::path::Path;
@@ -199,7 +194,7 @@ mod tests {
         mocks::create_mock_client_repository(&mut client_repositories);
 
         let json_string = serialize_config(
-            Option::from(Rc::new(RefCell::new(client_repositories.clone()))),
+            Option::from(&mut client_repositories.clone()),
             Option::from(&mut vec![client_repositories.clone()]),
         )
         .unwrap();
@@ -252,7 +247,7 @@ mod tests {
         let length_before = &deserialized_config.len();
 
         let json_string = serialize_config(
-            Option::from(Rc::new(RefCell::new(client_repositories))),
+            Option::from(&mut client_repositories),
             Option::Some(&mut deserialized_config),
         )
         .unwrap();
@@ -289,17 +284,17 @@ mod tests {
         struct MockPrompt {}
 
         impl Onboarding for MockPrompt {
-            fn onboarding(&self, _new_user: bool) -> Result<(), Box<dyn Error>> {
+            fn onboarding(&mut self, _new_user: bool) -> Result<(), Box<dyn Error>> {
                 assert!(false);
                 Ok(())
             }
         }
 
-        let mock_prompt = Rc::new(RefCell::new(MockPrompt {}));
+        let mut mock_prompt = MockPrompt {};
 
         let mut buffer = String::new();
 
-        read_file(&mut buffer, "./testing-utils/.hello.txt", mock_prompt).unwrap();
+        read_file(&mut buffer, "./testing-utils/.hello.txt", &mut mock_prompt).unwrap();
 
         assert_eq!(buffer.trim(), "hello");
     }
@@ -310,17 +305,22 @@ mod tests {
         struct MockPrompt {}
 
         impl Onboarding for MockPrompt {
-            fn onboarding(&self, _new_user: bool) -> Result<(), Box<dyn Error>> {
+            fn onboarding(&mut self, _new_user: bool) -> Result<(), Box<dyn Error>> {
                 assert!(true);
                 Ok(())
             }
         }
 
-        let mock_prompt = Rc::new(RefCell::new(MockPrompt {}));
+        let mut mock_prompt = MockPrompt {};
 
         let mut buffer = String::new();
 
-        read_file(&mut buffer, "./testing-utils/.timesheet.txt", mock_prompt).unwrap();
+        read_file(
+            &mut buffer,
+            "./testing-utils/.timesheet.txt",
+            &mut mock_prompt,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -341,11 +341,7 @@ mod tests {
         let file = File::create(&mock_config_path).unwrap();
         let string_path_from_temp_dir = mock_config_path.to_str().unwrap().to_owned();
 
-        let json = serialize_config(
-            Option::from(Rc::new(RefCell::new(client_repositories))),
-            None,
-        )
-        .unwrap();
+        let json = serialize_config(Option::from(&mut client_repositories), None).unwrap();
 
         assert!(write_json_to_config_file(json, string_path_from_temp_dir).is_ok());
 
@@ -364,11 +360,7 @@ mod tests {
 
         mocks::create_mock_client_repository(&mut client_repositories);
 
-        let json = serialize_config(
-            Option::from(Rc::new(RefCell::new(client_repositories))),
-            None,
-        )
-        .unwrap();
+        let json = serialize_config(Option::from(&mut client_repositories), None).unwrap();
 
         assert!(write_json_to_config_file(json, "./a/fake/path".to_string()).is_err());
     }
@@ -381,11 +373,7 @@ mod tests {
 
         mocks::create_mock_client_repository(&mut client_repositories);
 
-        let json = serialize_config(
-            Option::from(Rc::new(RefCell::new(client_repositories.clone()))),
-            None,
-        )
-        .unwrap();
+        let json = serialize_config(Option::from(&mut client_repositories.clone()), None).unwrap();
         let value: ConfigurationDoc = serde_json::from_str(&*json).unwrap();
 
         assert_eq!(

@@ -1,8 +1,6 @@
 use crate::config::New;
 use crate::data::repository::{GitLogDates, Repository};
 use serde::{Deserialize, Serialize};
-use std::cell::Ref;
-use std::ops::Deref;
 use std::process;
 use std::process::Command;
 
@@ -54,7 +52,7 @@ impl New for ClientRepositories {
 }
 
 impl ClientRepositories {
-    pub fn set_values(&mut self, repository: Ref<Repository>) -> &mut Self {
+    pub fn set_values(&mut self, repository: &mut Repository) -> &mut Self {
         self.client = Option::from(Client {
             id: repository.client_id.clone().unwrap_or("None".to_string()),
             client_name: repository.client_name.clone().unwrap_or("None".to_string()),
@@ -84,16 +82,18 @@ impl ClientRepositories {
             });
         }
 
-        self.repositories = Option::from(vec![repository.deref().clone()]);
+        self.repositories = Option::from(vec![repository.clone()]);
         self
     }
 
-    pub fn get_client_name(&self) -> String {
-        self.client.as_ref().unwrap().clone().client_name
+    pub fn get_client_name(&self) -> Option<String> {
+        self.client
+            .as_ref()
+            .map(|client| client.client_name.clone())
     }
 
-    pub fn get_client_id(&self) -> String {
-        self.client.as_ref().unwrap().clone().id
+    pub fn get_client_id(&self) -> Option<String> {
+        self.client.as_ref().map(|client| client.id.clone())
     }
 
     pub fn update_client_name(&mut self, value: String) -> &mut Self {
@@ -235,24 +235,26 @@ impl ClientRepositories {
         if let Some(repositories) = &mut self.repositories {
             for repository in repositories {
                 let command = String::from("--author");
+                if let Some(author) = repository.name.as_ref() {
+                    let author = [command, author.to_string()].join("=");
 
-                // can safely unwrap here as name would have been set in the previous step
-                let author = [command, repository.name.as_ref().unwrap().to_string()].join("=");
+                    let output = Command::new("git")
+                        .arg("-C")
+                        .arg(repository.git_path.as_ref().unwrap())
+                        .arg("log")
+                        .arg("--date=rfc")
+                        .arg(author)
+                        .arg("--all")
+                        .output()
+                        .expect("Failed to execute command");
 
-                let output = Command::new("git")
-                    .arg("-C")
-                    .arg(repository.git_path.as_ref().unwrap())
-                    .arg("log")
-                    .arg("--date=rfc")
-                    .arg(author)
-                    .arg("--all")
-                    .output()
-                    .expect("Failed to execute command");
+                    let output_string = crate::utils::trim_output_from_utf8(output)
+                        .unwrap_or_else(|_| "Parsing output failed".to_string());
 
-                let output_string = crate::utils::trim_output_from_utf8(output)
-                    .unwrap_or_else(|_| "Parsing output failed".to_string());
-
-                repository.parse_git_log_dates_from_git_history(output_string);
+                    repository.parse_git_log_dates_from_git_history(output_string);
+                } else {
+                    eprint!("Could not parse git log dates from git history. Repository name is missing")
+                }
             }
         }
 
@@ -299,7 +301,6 @@ mod tests {
     use crate::helpers::mocks;
     use nanoid::nanoid;
     use serde_json::json;
-    use std::cell::RefCell;
 
     #[test]
     fn it_set_requires_approval() {
@@ -375,7 +376,7 @@ mod tests {
 
         mocks::create_mock_client_repository(&mut client_repo);
 
-        let name = client_repo.get_client_name();
+        let name = client_repo.get_client_name().unwrap();
         assert_eq!(name, "alphabet");
     }
 
@@ -497,7 +498,7 @@ mod tests {
             ..Default::default()
         };
 
-        let repository = RefCell::new(Repository {
+        let mut repository = Repository {
             client_id: Option::from(client_id.clone()),
             client_name: Option::from("Alphabet".to_string()),
             client_address: Option::from("Alphabet way".to_string()),
@@ -507,9 +508,9 @@ mod tests {
             email: Option::from("jim@jones.com".to_string()),
             id: Option::from(repo_id.clone()),
             ..Default::default()
-        });
+        };
 
-        client_repositories.set_values(repository.borrow());
+        client_repositories.set_values(&mut repository);
 
         assert_eq!(
             json!(client_repositories.client),

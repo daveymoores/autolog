@@ -31,7 +31,8 @@ fn return_worked_hours_from_worked_days(
 
 pub fn is_weekend(date_tuple: &(i32, u32, u32), day: u32) -> bool {
     let day_of_week_index = Utc
-        .ymd(date_tuple.0, date_tuple.1, day)
+        .with_ymd_and_hms(date_tuple.0, date_tuple.1, day, 0, 0, 0)
+        .unwrap()
         .format("%u")
         .to_string();
 
@@ -189,7 +190,7 @@ pub fn get_timesheet_map_from_date_hashmap(
 }
 
 pub fn get_days_from_month(year: i32, month: u32) -> u32 {
-    NaiveDate::from_ymd(
+    NaiveDate::from_ymd_opt(
         match month {
             12 => year + 1,
             _ => year,
@@ -200,7 +201,8 @@ pub fn get_days_from_month(year: i32, month: u32) -> u32 {
         },
         1,
     )
-    .signed_duration_since(NaiveDate::from_ymd(year, month, 1))
+    .expect("Valid date expected")
+    .signed_duration_since(NaiveDate::from_ymd_opt(year, month, 1).expect("Valid date expected"))
     .num_days() as u32
 }
 

@@ -8,34 +8,30 @@ use ascii_table::AsciiTable;
 use dialoguer::{Confirm, Editor, Input, Select};
 use nanoid::nanoid;
 use regex::Regex;
-use std::cell::RefCell;
 use std::error::Error;
-use std::rc::Rc;
 
 pub type ConfigurationDoc = Vec<ClientRepositories>;
-pub type RCRepository = Rc<RefCell<Repository>>;
-pub type RCClientRepositories = Rc<RefCell<ClientRepositories>>;
 
 //TODO - consider using termion https://docs.rs/termion/1.5.6/termion/
-#[derive(Debug, Clone)]
-pub struct HelpPrompt {
-    repository: RCRepository,
-    client_repositories: RCClientRepositories,
+#[derive(Debug)]
+pub struct HelpPrompt<'a> {
+    repository: &'a mut Repository,
+    client_repositories: &'a mut ClientRepositories,
 }
 
 pub trait Onboarding {
-    fn onboarding(&self, new_user: bool) -> Result<(), Box<dyn std::error::Error>>;
+    fn onboarding(&mut self, new_user: bool) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 pub trait ExistingClientOnboarding {
     fn existing_client_onboarding(
-        &self,
+        &mut self,
         deserialized_config: &mut ConfigurationDoc,
     ) -> Result<(), Box<dyn std::error::Error>>;
 }
 
-impl Onboarding for HelpPrompt {
-    fn onboarding(&self, new_user: bool) -> Result<(), Box<dyn Error>> {
+impl<'a> Onboarding for HelpPrompt<'a> {
+    fn onboarding(&mut self, new_user: bool) -> Result<(), Box<dyn Error>> {
         self.confirm_repository_path(new_user)?
             .search_for_repository_details(Option::None)?
             .add_client_details()?
@@ -44,9 +40,9 @@ impl Onboarding for HelpPrompt {
     }
 }
 
-impl ExistingClientOnboarding for HelpPrompt {
+impl<'a> ExistingClientOnboarding for HelpPrompt<'a> {
     fn existing_client_onboarding(
-        &self,
+        &mut self,
         deserialized_config: &mut ConfigurationDoc,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.confirm_repository_path(false)?
@@ -56,12 +52,23 @@ impl ExistingClientOnboarding for HelpPrompt {
     }
 }
 
-impl HelpPrompt {
-    pub fn new(repository: RCRepository, client_repositories: RCClientRepositories) -> Self {
+impl<'a> HelpPrompt<'a> {
+    pub fn new(
+        repository: &'a mut Repository,
+        client_repositories: &'a mut ClientRepositories,
+    ) -> Self {
         Self {
             repository,
             client_repositories,
         }
+    }
+
+    pub fn repository(&mut self) -> &mut Repository {
+        self.repository
+    }
+
+    pub fn client_repositories(&mut self) -> &mut ClientRepositories {
+        self.client_repositories
     }
 
     pub fn repo_already_initialised() {
@@ -159,7 +166,7 @@ impl HelpPrompt {
         crate::utils::exit_process();
     }
 
-    fn take_and_validate_email<'a>(initial_text: Option<&str>) -> futures::io::Result<String> {
+    fn take_and_validate_email(initial_text: Option<&str>) -> futures::io::Result<String> {
         let text = initial_text.unwrap_or_default();
 
         Input::new()
@@ -180,10 +187,8 @@ impl HelpPrompt {
         &mut self,
         options: Vec<Option<String>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut client_repositories = self.client_repositories.borrow_mut();
-        let mut repository = self.repository.borrow_mut();
-        let client = client_repositories.client.as_ref().unwrap();
-        let user = client_repositories.user.as_ref().unwrap();
+        let client = self.client_repositories.client.as_ref().unwrap();
+        let user = self.client_repositories.user.as_ref().unwrap();
 
         if options[1].is_some() {
             Self::print_question(&format!(
@@ -201,15 +206,15 @@ impl HelpPrompt {
             match value {
                 "Namespace" => {
                     let input: String = Input::new()
-                        .with_initial_text(repository.namespace.as_ref().unwrap())
+                        .with_initial_text(self.repository.namespace.as_ref().unwrap())
                         .interact_text()?;
-                    repository.set_namespace_alias(input);
+                    self.repository.set_namespace_alias(input);
                 }
                 "Repository path" => {
                     let input: String = Input::new()
-                        .with_initial_text(repository.repo_path.as_ref().unwrap())
+                        .with_initial_text(self.repository.repo_path.as_ref().unwrap())
                         .interact_text()?;
-                    repository
+                    self.repository
                         .set_repo_path(input)
                         .find_repository_details_from()?;
                 }
@@ -236,7 +241,7 @@ impl HelpPrompt {
             match value {
                 "Approver name" => {
                     println!("Approver's name");
-                    let approvers_name = match &client_repositories.approver {
+                    let approvers_name = match &self.client_repositories.approver {
                         None => String::new(),
                         Some(approver) => match &approver.approvers_name {
                             None => String::new(),
@@ -247,12 +252,12 @@ impl HelpPrompt {
                     let input: String = Input::new()
                         .with_initial_text(approvers_name)
                         .interact_text()?;
-                    client_repositories.set_approvers_name(input);
-                    client_repositories.set_requires_approval(true);
+                    self.client_repositories.set_approvers_name(input);
+                    self.client_repositories.set_requires_approval(true);
                 }
                 "Approver email" => {
                     println!("Approver's email");
-                    let approvers_email = match &client_repositories.approver {
+                    let approvers_email = match &self.client_repositories.approver {
                         None => String::new(),
                         Some(approver) => match &approver.approvers_email {
                             None => String::new(),
@@ -262,41 +267,41 @@ impl HelpPrompt {
 
                     let input: String =
                         Self::take_and_validate_email(Option::Some(&*approvers_email))?;
-                    client_repositories.set_approvers_email(input);
-                    client_repositories.set_requires_approval(true);
+                    self.client_repositories.set_approvers_email(input);
+                    self.client_repositories.set_requires_approval(true);
                 }
                 "Client company name" => {
                     println!("Client company name");
                     let input: String = Input::new()
                         .with_initial_text(&client.client_name)
                         .interact_text()?;
-                    client_repositories.update_client_name(input);
+                    self.client_repositories.update_client_name(input);
                 }
                 "Client contact person" => {
                     println!("Client contact person");
                     let input: String = Input::new()
                         .with_initial_text(&client.client_contact_person)
                         .interact_text()?;
-                    client_repositories.update_client_contact_person(input);
+                    self.client_repositories.update_client_contact_person(input);
                 }
                 "Client address" => {
                     println!("Client address");
                     if let Some(input) = Editor::new().edit(&client.client_address)? {
-                        client_repositories.update_client_address(input);
+                        self.client_repositories.update_client_address(input);
                     }
                 }
                 "User name" => {
                     println!("User name");
                     let input: String =
                         Input::new().with_initial_text(&user.name).interact_text()?;
-                    client_repositories.set_user_name(input);
-                    client_repositories.set_is_user_alias(true);
+                    self.client_repositories.set_user_name(input);
+                    self.client_repositories.set_is_user_alias(true);
                 }
                 "User email" => {
                     println!("User email");
                     let input: String = Self::take_and_validate_email(Option::Some(&user.email))?;
-                    client_repositories.set_user_email(input);
-                    client_repositories.set_is_user_alias(true);
+                    self.client_repositories.set_user_email(input);
+                    self.client_repositories.set_is_user_alias(true);
                 }
                 _ => {}
             };
@@ -313,7 +318,7 @@ impl HelpPrompt {
 
         let mut clients: Vec<String> = deserialized_config
             .iter()
-            .map(|client| client.get_client_name().clone())
+            .map(|client| client.get_client_name().unwrap().clone())
             .collect();
 
         // If the clients array is empty, lets just onboard
@@ -335,17 +340,14 @@ impl HelpPrompt {
             // otherwise pre-populate the client and user details
             let client = deserialized_config
                 .iter()
-                .find(|client| &client.get_client_name() == client_name)
+                .find(|client| &client.get_client_name().unwrap() == client_name)
                 .unwrap();
 
-            self.client_repositories
-                .borrow_mut()
-                .set_values_from_buffer(client);
+            self.client_repositories.set_values_from_buffer(client);
 
             let unwrapped_client = client.client.as_ref().unwrap();
 
             self.repository
-                .borrow_mut()
                 .set_client_id(unwrapped_client.id.clone())
                 .set_client_name(unwrapped_client.client_name.clone())
                 .set_client_address(unwrapped_client.client_address.clone())
@@ -362,12 +364,11 @@ impl HelpPrompt {
     }
 
     pub fn confirm_repository_path(
-        &self,
+        &mut self,
         new_user: bool,
-    ) -> Result<&Self, Box<dyn std::error::Error>> {
-        let repo_path = self.repository.clone();
-        let mut borrow = repo_path.borrow_mut();
-        let path = match borrow.repo_path.as_ref() {
+    ) -> Result<&mut Self, Box<dyn std::error::Error>> {
+        let repo_path = self.repository.repo_path.as_ref();
+        let path = match repo_path {
             Some(path) => path.clone(),
             None => {
                 println!(
@@ -395,7 +396,7 @@ impl HelpPrompt {
         };
 
         if Confirm::new().default(true).interact()? {
-            borrow.set_repo_path(path);
+            self.repository.set_repo_path(path);
         } else {
             Self::print_question("Give a path to the repository you would like to use");
 
@@ -406,19 +407,17 @@ impl HelpPrompt {
 
             let input: String = Input::new().with_initial_text(path).interact_text()?;
 
-            borrow.set_repo_path(input);
+            self.repository.set_repo_path(input);
         }
 
         Ok(self)
     }
 
     pub fn prompt_for_setting_user_alias(
-        &self,
+        &mut self,
         name: String,
         email: String,
-    ) -> Result<&Self, Box<dyn std::error::Error>> {
-        let mut client_borrow = self.client_repositories.borrow_mut();
-
+    ) -> Result<&mut Self, Box<dyn std::error::Error>> {
         println!("\nThe git config name or email found for this repository differs from the one being used for your user details.");
         println!(
             "{}",
@@ -446,14 +445,14 @@ impl HelpPrompt {
         if Confirm::new().default(true).interact()? {
             Self::print_question("User name");
             let name: String = Input::new().interact_text()?;
-            client_borrow.set_user_name(name);
+            self.client_repositories.set_user_name(name);
 
             Self::print_question("User email");
             let email: String = Input::new().interact_text()?;
-            client_borrow.set_user_email(email);
+            self.client_repositories.set_user_email(email);
 
-            client_borrow.set_is_user_alias(true);
-            client_borrow.set_user_id(nanoid!());
+            self.client_repositories.set_is_user_alias(true);
+            self.client_repositories.set_user_id(nanoid!());
 
             println!("\nUser alias created \u{1F389}");
         }
@@ -462,14 +461,13 @@ impl HelpPrompt {
     }
 
     pub fn search_for_repository_details(
-        &self,
+        &mut self,
         deserialized_config: Option<&ConfigurationDoc>,
-    ) -> Result<&Self, Box<dyn std::error::Error>> {
-        let mut repository_borrow = self.repository.borrow_mut();
-        repository_borrow.find_repository_details_from()?;
+    ) -> Result<&mut Self, Box<dyn std::error::Error>> {
+        self.repository.find_repository_details_from()?;
 
-        repository_borrow.set_user_id(nanoid!());
-        repository_borrow.set_repository_id(nanoid!());
+        self.repository.set_user_id(nanoid!());
+        self.repository.set_repository_id(nanoid!());
 
         println!("{}", Self::dim_text("\u{1F916} Repository details found."));
 
@@ -477,7 +475,7 @@ impl HelpPrompt {
         if let Some(config) = deserialized_config {
             // get the client that has been set to the repository
             let client = config.iter().find(|client| {
-                &client.get_client_name() == repository_borrow.client_name.as_ref().unwrap()
+                &client.get_client_name().unwrap() == self.repository.client_name.as_ref().unwrap()
             });
 
             if let Some(client) = client {
@@ -487,7 +485,7 @@ impl HelpPrompt {
                 let is_alias = &user.is_alias;
 
                 // if the user details differ, prompt for alias
-                if repository_borrow.has_different_user_details(name, email) & !is_alias {
+                if self.repository.has_different_user_details(name, email) & !is_alias {
                     self.prompt_for_setting_user_alias(name.to_string(), email.to_string())?;
                 }
             }
@@ -496,32 +494,28 @@ impl HelpPrompt {
         Ok(self)
     }
 
-    pub fn add_client_details(&self) -> Result<&Self, std::io::Error> {
+    pub fn add_client_details(&mut self) -> Result<&mut Self, std::io::Error> {
         Self::print_question("Client company name");
         let input: String = Input::new().interact_text()?;
-        self.repository.borrow_mut().set_client_name(input);
+        self.repository.set_client_name(input);
 
         Self::print_question("Client contact person");
         let input: String = Input::new().interact_text()?;
-        self.repository
-            .borrow_mut()
-            .set_client_contact_person(input);
+        self.repository.set_client_contact_person(input);
 
         Self::print_question("Would you like to add a Client address?");
         if Confirm::new().default(true).interact()? {
             if let Some(input) = Editor::new().edit("Enter an address").unwrap() {
-                self.repository.borrow_mut().set_client_address(input);
+                self.repository.set_client_address(input);
             }
         }
-        self.repository.borrow_mut().set_client_id(nanoid!());
+        self.repository.set_client_id(nanoid!());
 
         Ok(self)
     }
 
-    pub fn prompt_for_manager_approval(&self) -> Result<&Self, Box<dyn Error>> {
-        let mut client_repositories = self.client_repositories.borrow_mut();
-
-        let prompt_for_approver = match client_repositories.requires_approval {
+    pub fn prompt_for_manager_approval(&mut self) -> Result<&mut Self, Box<dyn Error>> {
+        let prompt_for_approver = match self.client_repositories.requires_approval {
             None => true,
             Some(requires_approval) => !requires_approval,
         };
@@ -535,37 +529,41 @@ impl HelpPrompt {
             if Confirm::new().default(true).interact()? {
                 Self::print_question("Approvers name");
                 let input: String = Input::new().interact_text()?;
-                client_repositories.set_approvers_name(input);
+                self.client_repositories.set_approvers_name(input);
 
                 Self::print_question("Approvers email");
                 let input: String = Input::new().interact_text()?;
-                client_repositories.set_approvers_email(input);
+                self.client_repositories.set_approvers_email(input);
 
                 // TODO - check the above are set before setting this
-                client_repositories.set_requires_approval(true);
+                self.client_repositories.set_requires_approval(true);
             } else {
-                client_repositories.set_requires_approval(false);
+                self.client_repositories.set_requires_approval(false);
             }
         }
 
         Ok(self)
     }
 
-    pub fn add_project_numbers(&self) -> Result<&Self, Box<dyn Error>> {
-        let mut client_repositories = self.client_repositories.borrow_mut();
-
+    pub fn add_project_numbers(&mut self) -> Result<&mut Self, Box<dyn Error>> {
         println!(
             "{}",
             Self::dim_text(&format!(
                 "\u{1F916} Finding project data for '{}'...",
-                client_repositories.get_client_name()
+                self.client_repositories.get_client_name().unwrap()
             ))
         );
 
-        for i in 0..client_repositories.repositories.as_ref().unwrap().len() {
+        for i in 0..self
+            .client_repositories
+            .repositories
+            .as_ref()
+            .unwrap()
+            .len()
+        {
             Self::print_question(&format!(
                 "Does '{}' require a project/PO number?",
-                client_repositories.repositories.as_ref().unwrap()[i]
+                self.client_repositories.repositories.as_ref().unwrap()[i]
                     .namespace
                     .as_ref()
                     .unwrap()
@@ -573,7 +571,7 @@ impl HelpPrompt {
             if Confirm::new().default(true).interact()? {
                 Self::print_question("Project number");
                 let input: String = Input::new().interact_text()?;
-                client_repositories
+                self.client_repositories
                     .repositories
                     .as_mut()
                     .map(|repo| repo[i].set_project_number(input));
@@ -584,10 +582,10 @@ impl HelpPrompt {
     }
 
     pub fn prompt_for_client_repo_removal(
-        &self,
+        &mut self,
         options: Vec<Option<String>>,
         deserialized_config: &mut ConfigurationDoc,
-    ) -> Result<&Self, Box<dyn Error>> {
+    ) -> Result<&mut Self, Box<dyn Error>> {
         if options[1].is_some() {
             Self::print_question(&format!(
                 "Remove '{}' from client '{}'?",
@@ -661,44 +659,43 @@ impl HelpPrompt {
         format!("{}", Style::new().dimmed().paint(text))
     }
 
-    pub fn show_details(&self) -> &Self {
+    pub fn show_details(&mut self) -> &mut Self {
         Self::print_question("These are the details associated with this repository:");
         let ascii_table = AsciiTable::default();
         let mut data = vec![];
 
-        if let Some(namespace) = self.repository.borrow().namespace.as_ref() {
+        if let Some(namespace) = self.repository.namespace.as_ref() {
             let row = vec![Self::dim_text("Namespace:"), namespace.clone()];
             data.append(&mut vec![row]);
         }
-        if let Some(repo_path) = self.repository.borrow().repo_path.as_ref() {
+        if let Some(repo_path) = self.repository.repo_path.as_ref() {
             let row = vec![Self::dim_text("Repository path:"), repo_path.clone()];
             data.append(&mut vec![row]);
         }
-        if let Some(git_path) = self.repository.borrow().git_path.as_ref() {
+        if let Some(git_path) = self.repository.git_path.as_ref() {
             let row = vec![Self::dim_text("Git path:"), git_path.clone()];
             data.append(&mut vec![row]);
         }
-        if let Some(email) = self.repository.borrow().email.as_ref() {
+        if let Some(email) = self.repository.email.as_ref() {
             let row = vec![Self::dim_text("Email:"), email.clone()];
             data.append(&mut vec![row]);
         }
-        if let Some(name) = self.repository.borrow().name.as_ref() {
+        if let Some(name) = self.repository.name.as_ref() {
             let row = vec![Self::dim_text("Name:"), name.clone()];
             data.append(&mut vec![row]);
         }
-        if let Some(client_name) = self.repository.borrow().client_name.as_ref() {
+        if let Some(client_name) = self.repository.client_name.as_ref() {
             let row = vec![Self::dim_text("Client company name:"), client_name.clone()];
             data.append(&mut vec![row]);
         }
-        if let Some(client_contact_person) = self.repository.borrow().client_contact_person.as_ref()
-        {
+        if let Some(client_contact_person) = self.repository.client_contact_person.as_ref() {
             let row = vec![
                 Self::dim_text("Client contact person:"),
                 client_contact_person.clone(),
             ];
             data.append(&mut vec![row]);
         }
-        if let Some(client_address) = self.repository.borrow().client_address.as_ref() {
+        if let Some(client_address) = self.repository.client_address.as_ref() {
             let row = vec![
                 Self::dim_text("Client address:"),
                 client_address.clone().replace('\n', " "),
@@ -711,9 +708,12 @@ impl HelpPrompt {
         self
     }
 
-    pub fn list_clients_and_repos(&self, config: ConfigurationDoc) -> &Self {
+    pub fn list_clients_and_repos(&mut self, config: ConfigurationDoc) -> &mut Self {
         for client in config {
-            println!("\n {}", Style::new().bold().paint(client.get_client_name()));
+            println!(
+                "\n {}",
+                Style::new().bold().paint(client.get_client_name().unwrap())
+            );
             let ascii_table = AsciiTable::default();
             let mut rows = vec![];
 
