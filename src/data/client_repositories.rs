@@ -38,8 +38,6 @@ pub struct ClientRepositories {
     pub user: Option<User>,
     pub repositories: Option<Vec<Repository>>,
     pub requires_approval: Option<bool>,
-    pub user_signature: Option<String>,
-    pub approver_signature: Option<String>,
     pub approver: Option<Approver>,
 }
 

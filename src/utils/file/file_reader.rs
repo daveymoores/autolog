@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use tempfile::tempfile;
 
-const CONFIG_FILE_NAME: &str = ".autolog.txt";
+const CONFIG_FILE_NAME: &str = ".autolog";
 
 /// Find the path to the users home directory
 pub fn get_home_path() -> PathBuf {
@@ -267,7 +267,7 @@ mod tests {
         let _test = set_env(OsString::from("TEST_MODE"), "false");
 
         let path_buf = PathBuf::from("/path/to/usr");
-        assert_eq!(get_filepath(path_buf).unwrap(), "/path/to/usr/.autolog.txt");
+        assert_eq!(get_filepath(path_buf).unwrap(), "/path/to/usr/.autolog");
     }
 
     #[test]
