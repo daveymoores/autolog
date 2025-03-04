@@ -714,15 +714,22 @@ impl<'a> HelpPrompt<'a> {
                 "\n {}",
                 Style::new().bold().paint(client.get_client_name().unwrap())
             );
-            let ascii_table = AsciiTable::default();
-            let mut rows = vec![];
 
             if let Some(repositories) = client.repositories {
-                for repo in repositories {
-                    rows.push(vec![repo.namespace.unwrap()]);
-                }
+                if !repositories.is_empty() {
+                    // Only create and print table if there are repositories
+                    let ascii_table = AsciiTable::default();
+                    let rows: Vec<Vec<String>> = repositories
+                        .iter()
+                        .map(|repo| vec![repo.namespace.clone().unwrap()])
+                        .collect();
 
-                ascii_table.print(rows);
+                    ascii_table.print(rows);
+                } else {
+                    println!("No repositories");
+                }
+            } else {
+                println!("No repositories");
             }
         }
 

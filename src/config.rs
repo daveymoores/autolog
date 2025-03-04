@@ -48,7 +48,7 @@ impl Config {
         }
     }
 
-    fn push_found_values_into_rcs(
+    fn set_prompt_with_found_values(
         prompt: &mut HelpPrompt,
         found_repo: Option<&Repository>,
         found_client_repo: Option<&ClientRepositories>,
@@ -107,7 +107,7 @@ impl Config {
     }
 
     // Check for repo by path or by namespace
-    fn check_for_client_or_repo_in_buffer<'a>(
+    fn find_client_or_repo_in_buffer<'a>(
         self,
         deserialized_config: &'a mut ConfigurationDoc,
         repo_path: Option<&String>,
@@ -115,27 +115,31 @@ impl Config {
         client_name: Option<&String>,
     ) -> Result<(Option<&'a Repository>, Option<&'a ClientRepositories>), Box<dyn std::error::Error>>
     {
-        // function should return either a repository, a client repository, or both
-        let mut namespace: Option<String> = repo_namespace.map(|x| x.to_owned());
+        let namespace: Option<String> = match repo_namespace {
+            Some(ns) => Some(ns.to_owned()),
+            None => {
+                // Only try to get namespace from repository if no namespace was provided
+                if let Some(path) = repo_path {
+                    let mut temp_repository = Repository {
+                        repo_path: Some(path.to_owned()),
+                        ..Default::default()
+                    };
 
-        if let Some(path) = repo_path {
-            let mut temp_repository = Repository {
-                repo_path: Option::from(path.to_owned()),
-                ..Default::default()
-            };
+                    temp_repository
+                        .find_git_path_from_directory_from()?
+                        .find_namespace_from_git_path()?;
 
-            // get namespace of working repository
-            temp_repository
-                .find_git_path_from_directory_from()?
-                .find_namespace_from_git_path()?;
-
-            namespace = temp_repository.namespace;
-        }
+                    temp_repository.namespace
+                } else {
+                    None
+                }
+            }
+        };
 
         let mut option: (Option<&Repository>, Option<&ClientRepositories>) =
             (Option::None, Option::None);
-        // if a client name is passed, get ClientRepositories from that
-        // if this is true, repo_path and repo_namespace will be None
+        // if client_name is passed, find the client from the config
+        // and set it to a value in the tuple
         if let Some(c) = client_name {
             let mut found = false;
             for i in 0..deserialized_config.len() {
@@ -178,7 +182,7 @@ impl Config {
         Ok(option)
     }
 
-    fn check_for_config_file(self, buffer: &mut String, prompt: &mut HelpPrompt) {
+    fn find_or_create_config_file(self, buffer: &mut String, prompt: &mut HelpPrompt) {
         // pass a prompt for if the config file doesn't exist
         crate::utils::file::file_reader::read_data_from_config_file(buffer, prompt).unwrap_or_else(
             |err| {
@@ -246,7 +250,7 @@ impl Init for Config {
     fn init(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
         // try to read config file. Write a new one if it doesn't exist
         let mut buffer = String::new();
-        self.check_for_config_file(&mut buffer, prompt);
+        self.find_or_create_config_file(&mut buffer, prompt);
 
         // ..if the there is an existing config file, check whether the (passed path or namespace) repository exists under any clients
         // if it does pass Repository values to Repository
@@ -255,7 +259,7 @@ impl Init for Config {
                 .expect("Initialisation of ClientRepository struct from buffer failed");
 
             let (found_repo, found_client_repo) = self
-                .check_for_client_or_repo_in_buffer(
+                .find_client_or_repo_in_buffer(
                     &mut deserialized_config,
                     Option::from(&options[0]),
                     Option::None,
@@ -306,14 +310,14 @@ impl Make for Config {
         let mut buffer = String::new();
         let current_repo_path = file_reader::get_canonical_path(".");
 
-        self.check_for_config_file(&mut buffer, prompt);
+        self.find_or_create_config_file(&mut buffer, prompt);
 
         if crate::utils::config_file_found(&mut buffer) {
             let mut deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
                 .expect("Initialisation of ClientRepository struct from buffer failed");
 
             let (found_repo, found_client_repo) = self
-                .check_for_client_or_repo_in_buffer(
+                .find_client_or_repo_in_buffer(
                     &mut deserialized_config,
                     Option::from(&current_repo_path),
                     Option::None,
@@ -324,7 +328,7 @@ impl Make for Config {
                     std::process::exit(exitcode::DATAERR);
                 });
 
-            Self::push_found_values_into_rcs(prompt, found_repo, found_client_repo);
+            Self::set_prompt_with_found_values(prompt, found_repo, found_client_repo);
 
             if found_client_repo.is_some() {
                 prompt
@@ -367,14 +371,14 @@ impl Edit for Config {
     fn edit(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
         // try to read config file. Write a new one if it doesn't exist
         let mut buffer = String::new();
-        self.check_for_config_file(&mut buffer, prompt);
+        self.find_or_create_config_file(&mut buffer, prompt);
 
         if crate::utils::config_file_found(&mut buffer) {
             let mut deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
                 .expect("Initialisation of ClientRepository struct from buffer failed");
 
             let (found_repo, found_client_repo) = self
-                .check_for_client_or_repo_in_buffer(
+                .find_client_or_repo_in_buffer(
                     &mut deserialized_config,
                     Option::None,
                     Option::from(&options[0]),
@@ -385,7 +389,7 @@ impl Edit for Config {
                     std::process::exit(exitcode::DATAERR);
                 });
 
-            Self::push_found_values_into_rcs(prompt, found_repo, found_client_repo);
+            Self::set_prompt_with_found_values(prompt, found_repo, found_client_repo);
 
             if found_client_repo.is_some() {
                 prompt
@@ -439,7 +443,7 @@ impl Remove for Config {
     ) {
         // try to read config file. Write a new one if it doesn't exist
         let mut buffer = String::new();
-        self.check_for_config_file(&mut buffer, prompt);
+        self.find_or_create_config_file(&mut buffer, prompt);
 
         // Find repo or client and remove them from config file
         if crate::utils::config_file_found(&mut buffer) {
@@ -451,7 +455,7 @@ impl Remove for Config {
             }
 
             let (_found_repo, found_client_repo) = self
-                .check_for_client_or_repo_in_buffer(
+                .find_client_or_repo_in_buffer(
                     deserialized_config,
                     Option::None,
                     Option::from(&options[1]),
@@ -495,14 +499,14 @@ impl Update for Config {
     fn update(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
         // try to read config file. Write a new one if it doesn't exist
         let mut buffer = String::new();
-        self.check_for_config_file(&mut buffer, prompt);
+        self.find_or_create_config_file(&mut buffer, prompt);
 
         if crate::utils::config_file_found(&mut buffer) {
             let mut deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
                 .expect("Initialisation of ClientRepository struct from buffer failed");
 
             let (found_repo, found_client_repo) = self
-                .check_for_client_or_repo_in_buffer(
+                .find_client_or_repo_in_buffer(
                     &mut deserialized_config,
                     Option::None,
                     Option::from(&options[1]),
@@ -513,7 +517,7 @@ impl Update for Config {
                     std::process::exit(exitcode::DATAERR);
                 });
 
-            Self::push_found_values_into_rcs(prompt, found_repo, found_client_repo);
+            Self::set_prompt_with_found_values(prompt, found_repo, found_client_repo);
 
             if found_client_repo.is_some() {
                 prompt.prompt_for_update(options).expect("Update failed");
@@ -544,7 +548,7 @@ impl List for Config {
     fn list(&self, prompt: &mut HelpPrompt) {
         // try to read config file. Write a new one if it doesn't exist
         let mut buffer = String::new();
-        self.check_for_config_file(&mut buffer, prompt);
+        self.find_or_create_config_file(&mut buffer, prompt);
 
         if crate::utils::config_file_found(&mut buffer) {
             let deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
@@ -794,7 +798,7 @@ mod tests {
         let config: Config = Config::new();
 
         if let Some(repository) = config
-            .check_for_client_or_repo_in_buffer(
+            .find_client_or_repo_in_buffer(
                 &mut vec![deserialized_config],
                 Option::from(&".".to_string()),
                 Option::None,
@@ -821,7 +825,7 @@ mod tests {
         let config: Config = Config::new();
 
         if let Some(repository) = config
-            .check_for_client_or_repo_in_buffer(
+            .find_client_or_repo_in_buffer(
                 &mut vec![deserialized_config],
                 Option::None,
                 Option::from(&"autolog".to_string()),
@@ -848,7 +852,7 @@ mod tests {
         let config: Config = Config::new();
 
         if let Some(client_repo) = config
-            .check_for_client_or_repo_in_buffer(
+            .find_client_or_repo_in_buffer(
                 &mut vec![deserialized_config],
                 Option::None,
                 Option::None,
