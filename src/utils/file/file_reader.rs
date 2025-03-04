@@ -38,6 +38,7 @@ fn read_file<T>(
 where
     T: Onboarding,
 {
+    println!("{:?}", path);
     match File::open(path) {
         Ok(mut file) => {
             file.read_to_string(buffer)?;
