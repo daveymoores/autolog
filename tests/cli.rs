@@ -73,7 +73,6 @@ fn runs_make_with_success() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-#[ignore]
 fn runs_remove_with_failure() {
     let mut cmd = Command::cargo_bin("autolog").unwrap();
     let assert = cmd
