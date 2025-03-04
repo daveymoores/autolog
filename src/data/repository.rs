@@ -759,12 +759,22 @@ Date:   Thu, 3 Jan 2019 11:06:17 +0200
 
     #[test]
     fn it_sets_repo_path() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let dir_path = temp_dir.path().to_string_lossy().to_string();
+
         let mut timesheet = Repository {
             ..Default::default()
         };
 
-        timesheet.set_repo_path("repo_path".to_string());
-        assert_eq!(timesheet.repo_path.unwrap(), "repo_path".to_string());
+        timesheet.set_repo_path(dir_path.clone());
+        // The canonical path might have different formatting, so we need to canonicalize here too
+        let expected = fs::canonicalize(dir_path)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(timesheet.repo_path.unwrap(), expected);
     }
 
     #[test]

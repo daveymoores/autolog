@@ -69,7 +69,7 @@ impl ClientRepositories {
             Some(user) => !user.is_alias,
         };
 
-        // if an alias hasn't been, or there isn't a user yet, set the user from repo
+        // if an alias hasn't been set, or there isn't a user yet, set the user from repo
         if should_set_user {
             self.user = Option::from(User {
                 id: repository.user_id.clone().unwrap_or("None".to_string()),
@@ -80,7 +80,25 @@ impl ClientRepositories {
             });
         }
 
-        self.repositories = Option::from(vec![repository.clone()]);
+        match self.repositories.as_mut() {
+            Some(repos) => {
+                let repo_exists = repos.iter().any(|r| r.id == repository.id);
+                if !repo_exists {
+                    repos.push(repository.clone());
+                } else {
+                    // Update existing repository
+                    if let Some(index) = repos.iter().position(|r| r.id == repository.id) {
+                        repos[index] = repository.clone();
+                    }
+                }
+            }
+            None => {
+                let mut repos = Vec::new();
+                repos.push(repository.clone());
+                self.repositories = Some(repos);
+            }
+        }
+
         self
     }
 
