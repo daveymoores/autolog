@@ -3,8 +3,8 @@ extern crate dotenv;
 use dotenv::dotenv;
 use futures::TryStreamExt;
 use mongodb::options::{ClientOptions, ResolverConfig};
-use mongodb::{bson::doc, options::FindOptions};
 use mongodb::{Client, Collection};
+use mongodb::{bson::doc, options::FindOptions};
 use serde::de::DeserializeOwned;
 use std::error::Error;
 
