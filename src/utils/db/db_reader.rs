@@ -1,4 +1,3 @@
-// src/utils/db/db_reader.rs
 use crate::data::client_repositories::ClientRepositories;
 use crate::data::repository::Repository;
 use crate::interface::help_prompt::{ConfigurationDoc, Onboarding};
@@ -6,6 +5,8 @@ use crate::utils::is_test_mode;
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, params};
+use serde_json::{Map, Number, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -33,6 +34,9 @@ pub fn get_connection() -> Result<Connection> {
     let conn =
         Connection::open(&db_path).context(format!("Failed to open database at {:?}", db_path))?;
 
+    // Enable foreign key support
+    conn.execute("PRAGMA foreign_keys = ON", [])?;
+
     // Initialize schema if needed
     init_schema(&conn).context("Failed to initialize database schema")?;
 
@@ -44,12 +48,12 @@ fn init_schema(conn: &Connection) -> Result<()> {
     // Create clients table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS clients (
-            id TEXT PRIMARY KEY,
-            client_name TEXT NOT NULL,
-            client_address TEXT,
-            client_contact_person TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )",
+    id TEXT PRIMARY KEY,
+    client_name TEXT NOT NULL,
+    client_address TEXT,
+    client_contact_person TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )",
         [],
     )
     .context("Failed to create clients table")?;
@@ -57,13 +61,13 @@ fn init_schema(conn: &Connection) -> Result<()> {
     // Create users table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            email TEXT,
-            is_alias INTEGER NOT NULL DEFAULT 0,
-            thumbnail TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )",
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT,
+    is_alias INTEGER NOT NULL DEFAULT 0,
+    thumbnail TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )",
         [],
     )
     .context("Failed to create users table")?;
@@ -71,24 +75,24 @@ fn init_schema(conn: &Connection) -> Result<()> {
     // Create repositories table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS repositories (
-            id TEXT PRIMARY KEY,
-            namespace TEXT,
-            namespace_alias TEXT,
-            repo_path TEXT,
-            git_path TEXT,
-            user_id TEXT,
-            name TEXT,
-            email TEXT,
-            client_id TEXT,
-            client_name TEXT,
-            client_contact_person TEXT,
-            client_address TEXT,
-            project_number TEXT,
-            service TEXT,
-            service_username TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (client_id) REFERENCES clients (id)
-        )",
+    id TEXT PRIMARY KEY,
+    namespace TEXT,
+    namespace_alias TEXT,
+    repo_path TEXT,
+    git_path TEXT,
+    user_id TEXT,
+    name TEXT,
+    email TEXT,
+    client_id TEXT,
+    client_name TEXT,
+    client_contact_person TEXT,
+    client_address TEXT,
+    project_number TEXT,
+    service TEXT,
+    service_username TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (client_id) REFERENCES clients (id)
+    )",
         [],
     )
     .context("Failed to create repositories table")?;
@@ -96,53 +100,75 @@ fn init_schema(conn: &Connection) -> Result<()> {
     // Create git_log_dates table with proper structure for HashMap<i32, HashMap<u32, HashSet<u32>>>
     conn.execute(
         "CREATE TABLE IF NOT EXISTS git_log_years (
-            repository_id TEXT NOT NULL,
-            year INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (repository_id, year),
-            FOREIGN KEY (repository_id) REFERENCES repositories (id)
-        )",
+    repository_id TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (repository_id, year),
+    FOREIGN KEY (repository_id) REFERENCES repositories (id)
+    )",
         [],
     )
     .context("Failed to create git_log_years table")?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS git_log_months (
-            repository_id TEXT NOT NULL,
-            year INTEGER NOT NULL,
-            month INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (repository_id, year, month),
-            FOREIGN KEY (repository_id, year) REFERENCES git_log_years (repository_id, year)
-        )",
+    repository_id TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (repository_id, year, month),
+    FOREIGN KEY (repository_id, year) REFERENCES git_log_years (repository_id, year)
+    )",
         [],
     )
     .context("Failed to create git_log_months table")?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS git_log_days (
-            repository_id TEXT NOT NULL,
-            year INTEGER NOT NULL,
-            month INTEGER NOT NULL,
-            day INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (repository_id, year, month, day),
-            FOREIGN KEY (repository_id, year, month) REFERENCES git_log_months (repository_id, year, month)
-        )",
+    repository_id TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    day INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (repository_id, year, month, day),
+    FOREIGN KEY (repository_id, year, month) REFERENCES git_log_months (repository_id, year, month)
+    )",
         [],
-    ).context("Failed to create git_log_days table")?;
+    )
+    .context("Failed to create git_log_days table")?;
+
+    // Create simplified timesheet table with direct column storage
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS timesheet_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repository_id TEXT NOT NULL,
+    year TEXT NOT NULL,
+    month TEXT NOT NULL,
+    day INTEGER NOT NULL,
+    hours REAL,
+    weekend INTEGER NOT NULL DEFAULT 0,
+    user_edited INTEGER NOT NULL DEFAULT 0,
+    extra_data TEXT, -- JSON for any additional fields
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(repository_id, year, month, day),
+    FOREIGN KEY (repository_id) REFERENCES repositories (id)
+    )",
+        [],
+    )
+    .context("Failed to create timesheet_entries table")?;
 
     // Create client_repositories table (for joining clients and users with approval info)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS client_repositories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_id TEXT NOT NULL,
-            user_id TEXT,
-            requires_approval INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (client_id) REFERENCES clients (id),
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )",
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id TEXT NOT NULL,
+    user_id TEXT,
+    requires_approval INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (client_id) REFERENCES clients (id),
+    FOREIGN KEY (user_id) REFERENCES users (id)
+    )",
         [],
     )
     .context("Failed to create client_repositories table")?;
@@ -150,18 +176,16 @@ fn init_schema(conn: &Connection) -> Result<()> {
     // Create approvers table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS approvers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_repository_id INTEGER NOT NULL,
-            approvers_name TEXT,
-            approvers_email TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (client_repository_id) REFERENCES client_repositories (id)
-        )",
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_repository_id INTEGER NOT NULL,
+    approvers_name TEXT,
+    approvers_email TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (client_repository_id) REFERENCES client_repositories (id)
+    )",
         [],
     )
     .context("Failed to create approvers table")?;
-
-    // Additional timesheet-related tables would go here
 
     Ok(())
 }
@@ -226,13 +250,22 @@ pub fn write_config_to_db(json: String) -> Result<(), Box<dyn std::error::Error>
     // Use a transaction for atomicity
     let tx = conn.transaction()?;
 
-    // Write each client repository to the database
-    for client_repo in config_doc.iter() {
-        save_client_repository(&tx, client_repo)?;
-    }
+    // Try to write each client repository to the database
+    let result = (|| {
+        for client_repo in config_doc.iter() {
+            save_client_repository(&tx, client_repo)?;
+        }
+        Ok(())
+    })();
 
-    // Commit the transaction
-    tx.commit()?;
+    // Only commit if everything succeeded
+    if result.is_ok() {
+        tx.commit()?;
+    } else {
+        let _ = tx.rollback();
+        println!("Changes rolled back due to error");
+        return result;
+    }
 
     Ok(())
 }
@@ -245,22 +278,22 @@ fn save_client_repository(
     // Save client if present
     if let Some(client) = &client_repo.client {
         tx.execute(
-            "INSERT OR REPLACE INTO clients (id, client_name, client_address, client_contact_person)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![
-                client.id,
-                client.client_name,
-                client.client_address,
-                client.client_contact_person
-            ],
-        )?;
+      "INSERT OR REPLACE INTO clients (id, client_name, client_address, client_contact_person)
+      VALUES (?1, ?2, ?3, ?4)",
+      params![
+        client.id,
+        client.client_name,
+        client.client_address,
+        client.client_contact_person
+      ],
+    )?;
     }
 
     // Save user if present
     if let Some(user) = &client_repo.user {
         tx.execute(
             "INSERT OR REPLACE INTO users (id, name, email, is_alias, thumbnail)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+      VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 user.id,
                 user.name,
@@ -277,7 +310,7 @@ fn save_client_repository(
         let client_repo_id: Option<i64> = tx
             .query_row(
                 "SELECT id FROM client_repositories
-             WHERE client_id = ?1 AND user_id = ?2",
+        WHERE client_id = ?1 AND user_id = ?2",
                 params![client.id, user.id],
                 |row| row.get(0),
             )
@@ -287,8 +320,8 @@ fn save_client_repository(
             // Update existing relation
             tx.execute(
                 "UPDATE client_repositories
-                 SET requires_approval = ?1
-                 WHERE id = ?2",
+        SET requires_approval = ?1
+        WHERE id = ?2",
                 params![client_repo.requires_approval.unwrap_or(false) as i32, id],
             )?;
             id
@@ -296,7 +329,7 @@ fn save_client_repository(
             // Insert new relation
             tx.execute(
                 "INSERT INTO client_repositories (client_id, user_id, requires_approval)
-                 VALUES (?1, ?2, ?3)",
+        VALUES (?1, ?2, ?3)",
                 params![
                     client.id,
                     user.id,
@@ -309,14 +342,14 @@ fn save_client_repository(
         // Save approver if it exists
         if let Some(approver) = &client_repo.approver {
             tx.execute(
-                "INSERT OR REPLACE INTO approvers (client_repository_id, approvers_name, approvers_email)
-                 VALUES (?1, ?2, ?3)",
-                params![
-                    client_repo_id,
-                    approver.approvers_name,
-                    approver.approvers_email
-                ],
-            )?;
+        "INSERT OR REPLACE INTO approvers (client_repository_id, approvers_name, approvers_email)
+        VALUES (?1, ?2, ?3)",
+        params![
+          client_repo_id,
+          approver.approvers_name,
+          approver.approvers_email
+        ],
+      )?;
         }
     }
 
@@ -324,14 +357,32 @@ fn save_client_repository(
     if let Some(repositories) = &client_repo.repositories {
         for repo in repositories {
             if let Some(id) = &repo.id {
+                // Verify repository exists before proceeding
+                let repo_exists: bool = tx
+                    .query_row(
+                        "SELECT 1 FROM repositories WHERE id = ?1 LIMIT 1",
+                        params![id],
+                        |_| Ok(true),
+                    )
+                    .unwrap_or(false);
+
+                if !repo_exists {
+                    // Insert repository
+                    println!("Repository with ID {} doesn't exist, creating it", id);
+                    tx.execute(
+                        "INSERT INTO repositories (id, name) VALUES (?1, ?2)",
+                        params![id, repo.name.as_ref().unwrap_or(&String::from("Unknown"))],
+                    )?;
+                }
+
                 // Save repository
                 tx.execute(
                     "INSERT OR REPLACE INTO repositories (
-                        id, namespace, namespace_alias, repo_path, git_path,
-                        user_id, name, email, client_id, client_name,
-                        client_contact_person, client_address, project_number,
-                        service, service_username
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+          id, namespace, namespace_alias, repo_path, git_path,
+          user_id, name, email, client_id, client_name,
+          client_contact_person, client_address, project_number,
+          service, service_username
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                     params![
                         id,
                         repo.namespace,
@@ -357,7 +408,7 @@ fn save_client_repository(
                         // Insert year
                         tx.execute(
                             "INSERT OR REPLACE INTO git_log_years (repository_id, year)
-                             VALUES (?1, ?2)",
+              VALUES (?1, ?2)",
                             params![id, year],
                         )?;
 
@@ -365,17 +416,77 @@ fn save_client_repository(
                             // Insert month
                             tx.execute(
                                 "INSERT OR REPLACE INTO git_log_months (repository_id, year, month)
-                                 VALUES (?1, ?2, ?3)",
+                VALUES (?1, ?2, ?3)",
                                 params![id, year, month],
                             )?;
 
                             for &day in days.iter() {
                                 // Insert day
                                 tx.execute(
-                                    "INSERT OR REPLACE INTO git_log_days (repository_id, year, month, day)
-                                     VALUES (?1, ?2, ?3, ?4)",
-                                    params![id, year, month, day],
-                                )?;
+                  "INSERT OR REPLACE INTO git_log_days (repository_id, year, month, day)
+                  VALUES (?1, ?2, ?3, ?4)",
+                  params![id, year, month, day],
+                )?;
+                            }
+                        }
+                    }
+                }
+
+                // Save timesheet if present - using new simplified structure
+                if let Some(timesheet) = &repo.timesheet {
+                    // Prepare statement for efficiency
+                    let mut stmt = tx.prepare(
+                        "INSERT OR REPLACE INTO timesheet_entries (
+              repository_id, year, month, day, hours, weekend, user_edited, extra_data, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)",
+                    )?;
+
+                    for (year, months) in timesheet {
+                        for (month, days) in months {
+                            for (day_index, day_data) in days.iter().enumerate() {
+                                let day = day_index + 1; // Convert 0-based index to 1-based day
+
+                                // Extract common fields
+                                let hours = day_data
+                                    .get("hours")
+                                    .and_then(|v| v.as_f64())
+                                    .unwrap_or(0.0);
+
+                                let weekend = day_data
+                                    .get("weekend")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+
+                                let user_edited = day_data
+                                    .get("user_edited")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+
+                                // Extract any additional fields as JSON
+                                let mut extra_data = Map::new();
+                                for (key, value) in day_data.iter() {
+                                    if key != "hours" && key != "weekend" && key != "user_edited" {
+                                        extra_data.insert(key.clone(), value.clone());
+                                    }
+                                }
+
+                                let extra_json = if extra_data.is_empty() {
+                                    None
+                                } else {
+                                    Some(serde_json::to_string(&extra_data)?)
+                                };
+
+                                // Insert or update the entry
+                                stmt.execute(params![
+                                    id,
+                                    year,
+                                    month,
+                                    day,
+                                    hours,
+                                    weekend as i32,
+                                    user_edited as i32,
+                                    extra_json
+                                ])?;
                             }
                         }
                     }
@@ -394,7 +505,7 @@ fn load_config_doc(conn: &Connection) -> Result<ConfigurationDoc, Box<dyn std::e
     // Get all clients
     let mut stmt = conn.prepare(
         "SELECT id, client_name, client_address, client_contact_person
-         FROM clients",
+    FROM clients",
     )?;
 
     let client_rows = stmt.query_map([], |row| {
@@ -421,10 +532,10 @@ fn load_config_doc(conn: &Connection) -> Result<ConfigurationDoc, Box<dyn std::e
         let user = conn
             .query_row(
                 "SELECT u.id, u.name, u.email, u.is_alias, u.thumbnail
-                 FROM users u
-                 JOIN client_repositories cr ON u.id = cr.user_id
-                 WHERE cr.client_id = ?1
-                 LIMIT 1",
+        FROM users u
+        JOIN client_repositories cr ON u.id = cr.user_id
+        WHERE cr.client_id = ?1
+        LIMIT 1",
                 params![id],
                 |row| {
                     Ok(Some(crate::data::client_repositories::User {
@@ -456,10 +567,10 @@ fn load_config_doc(conn: &Connection) -> Result<ConfigurationDoc, Box<dyn std::e
         let approver = conn
             .query_row(
                 "SELECT a.approvers_name, a.approvers_email
-                 FROM approvers a
-                 JOIN client_repositories cr ON a.client_repository_id = cr.id
-                 WHERE cr.client_id = ?1
-                 LIMIT 1",
+        FROM approvers a
+        JOIN client_repositories cr ON a.client_repository_id = cr.id
+        WHERE cr.client_id = ?1
+        LIMIT 1",
                 params![id],
                 |row| {
                     Ok(Some(crate::data::client_repositories::Approver {
@@ -474,11 +585,11 @@ fn load_config_doc(conn: &Connection) -> Result<ConfigurationDoc, Box<dyn std::e
         // Find repositories for this client
         let mut repo_stmt = conn.prepare(
             "SELECT id, namespace, namespace_alias, repo_path, git_path,
-                    user_id, name, email, client_id, client_name,
-                    client_contact_person, client_address, project_number,
-                    service, service_username
-             FROM repositories
-             WHERE client_id = ?1",
+      user_id, name, email, client_id, client_name,
+      client_contact_person, client_address, project_number,
+      service, service_username
+      FROM repositories
+      WHERE client_id = ?1",
         )?;
 
         let repo_rows = repo_stmt.query_map(params![id], |row| {
@@ -531,7 +642,7 @@ fn load_config_doc(conn: &Connection) -> Result<ConfigurationDoc, Box<dyn std::e
                 // Get all months for this year
                 let mut month_stmt = conn.prepare(
                     "SELECT month FROM git_log_months
-                     WHERE repository_id = ?1 AND year = ?2",
+          WHERE repository_id = ?1 AND year = ?2",
                 )?;
 
                 let month_rows = month_stmt.query_map(params![repo_id, year], |row| {
@@ -546,7 +657,7 @@ fn load_config_doc(conn: &Connection) -> Result<ConfigurationDoc, Box<dyn std::e
                     // Get all days for this month
                     let mut day_stmt = conn.prepare(
                         "SELECT day FROM git_log_days
-                         WHERE repository_id = ?1 AND year = ?2 AND month = ?3",
+            WHERE repository_id = ?1 AND year = ?2 AND month = ?3",
                     )?;
 
                     let day_rows = day_stmt.query_map(params![repo_id, year, month], |row| {
@@ -574,8 +685,74 @@ fn load_config_doc(conn: &Connection) -> Result<ConfigurationDoc, Box<dyn std::e
                 Some(git_log_dates)
             };
 
-            // Here we would also load timesheet data if needed
-            // but that's omitted for brevity
+            // Load timesheet data using the new simplified structure
+            let mut timesheet_years = HashMap::new();
+
+            // Get all timesheet entries for this repository
+            let mut timesheet_stmt = conn.prepare(
+                "SELECT year, month, day, hours, weekend, user_edited, extra_data
+         FROM timesheet_entries
+         WHERE repository_id = ?1
+         ORDER BY year, month, day",
+            )?;
+
+            let timesheet_rows = timesheet_stmt.query_map(params![repo_id], |row| {
+                let year: String = row.get(0)?;
+                let month: String = row.get(1)?;
+                let day: i32 = row.get(2)?;
+                let hours: f64 = row.get(3)?;
+                let weekend: bool = row.get::<_, i32>(4)? != 0;
+                let user_edited: bool = row.get::<_, i32>(5)? != 0;
+                let extra_data: Option<String> = row.get(6)?;
+
+                Ok((year, month, day, hours, weekend, user_edited, extra_data))
+            })?;
+
+            for entry_result in timesheet_rows {
+                let (year, month, day, hours, weekend, user_edited, extra_data) = entry_result?;
+
+                // Create a Map to store the day data
+                let mut day_data = Map::new();
+
+                // Add common fields
+                day_data.insert(
+                    "hours".to_string(),
+                    Value::Number(Number::from_f64(hours).unwrap_or(Number::from(0))),
+                );
+                day_data.insert("weekend".to_string(), Value::Bool(weekend));
+                day_data.insert("user_edited".to_string(), Value::Bool(user_edited));
+
+                // Add any extra data fields
+                if let Some(extra_json) = extra_data {
+                    if let Ok(extra_map) = serde_json::from_str::<Map<String, Value>>(&extra_json) {
+                        for (key, value) in extra_map {
+                            day_data.insert(key, value);
+                        }
+                    }
+                }
+
+                // Get or create the year map
+                let year_map = timesheet_years.entry(year).or_insert_with(HashMap::new);
+
+                // Get or create the month vector
+                let month_days = year_map
+                    .entry(month)
+                    .or_insert_with(|| Vec::with_capacity(31));
+
+                // Ensure the month vector has enough capacity
+                while month_days.len() < day as usize {
+                    month_days.push(Map::new());
+                }
+
+                // Insert the day data at the appropriate index (day - 1)
+                month_days[day as usize - 1] = day_data;
+            }
+
+            repo.timesheet = if timesheet_years.is_empty() {
+                None
+            } else {
+                Some(timesheet_years)
+            };
 
             // Add to repositories list
             repositories.push(repo);

@@ -14,8 +14,8 @@ use std::process;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-/// Creates and modifies the config file. Config does not directly hold the information
-/// contained in the config file, but provides the various operations that can be
+/// Creates and modifies the  db Config does not directly hold the information
+/// contained in the  db but provides the various operations that can be
 /// performed on it. The data is a stored within the Repository struct.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -176,7 +176,7 @@ impl Config {
     }
 
     fn find_or_create_db(self, buffer: &mut String, prompt: &mut HelpPrompt) {
-        // pass a prompt for if the config file doesn't exist
+        // pass a prompt for if the  dbdoesn't exist
         crate::utils::db::db_reader::read_data_from_db(buffer, prompt).unwrap_or_else(|err| {
             eprintln!("Error initialising autolog: {}", err);
             std::process::exit(exitcode::CANTCREAT);
@@ -233,17 +233,17 @@ impl Config {
 }
 
 pub trait Init {
-    /// Generate a config file with user variables
+    /// Generate a db with user variables
     fn init(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt);
 }
 
 impl Init for Config {
     fn init(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
-        // try to read config file. Write a new one if it doesn't exist
+        // try to read db. Write a new one if it doesn't exist
         let mut buffer = String::new();
         self.find_or_create_db(&mut buffer, prompt);
 
-        // ..if the there is an existing config file, check whether the (passed path or namespace) repository exists under any clients
+        // ..if the there is an exis dbfile, check whether the (passed path or namespace) repository exists under any clients
         // if it does pass Repository values to Repository
         if crate::utils::config_file_found(&mut buffer) {
             let mut deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
@@ -257,7 +257,7 @@ impl Init for Config {
                     Option::None,
                 )
                 .unwrap_or_else(|err| {
-                    eprintln!("Error trying to read from config file: {}", err);
+                    eprintln!("Error trying to read from db: {}", err);
                     std::process::exit(exitcode::DATAERR);
                 });
 
@@ -297,7 +297,7 @@ pub trait Make {
 impl Make for Config {
     #[tokio::main]
     async fn make(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
-        // try to read config file. Write a new one if it doesn't exist
+        // try to read db. Write a new one if it doesn't exist
         let mut buffer = String::new();
         let current_repo_path = db_reader::get_canonical_path(".");
 
@@ -315,7 +315,7 @@ impl Make for Config {
                     Option::from(&options[0]),
                 )
                 .unwrap_or_else(|err| {
-                    eprintln!("Error trying to read from config file: {}", err);
+                    eprintln!("Error trying to read from db: {}", err);
                     std::process::exit(exitcode::DATAERR);
                 });
 
@@ -354,13 +354,13 @@ impl Make for Config {
 }
 
 pub trait Edit {
-    /// Generate a config file with user variables
+    /// Generate a db withuser variables
     fn edit(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt);
 }
 
 impl Edit for Config {
     fn edit(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
-        // try to read config file. Write a new one if it doesn't exist
+        // try to read db. Write a new one if it doesn't exist
         let mut buffer = String::new();
         self.find_or_create_db(&mut buffer, prompt);
 
@@ -376,7 +376,7 @@ impl Edit for Config {
                     Option::None,
                 )
                 .unwrap_or_else(|err| {
-                    eprintln!("Error trying to read from config file: {}", err);
+                    eprintln!("Error trying to read from db: {}", err);
                     std::process::exit(exitcode::DATAERR);
                 });
 
@@ -432,11 +432,11 @@ impl Remove for Config {
         prompt: &mut HelpPrompt,
         deserialized_config: &mut ConfigurationDoc,
     ) {
-        // try to read config file. Write a new one if it doesn't exist
+        // try to read db. Write a new one if it doesn't exist
         let mut buffer = String::new();
         self.find_or_create_db(&mut buffer, prompt);
 
-        // Find repo or client and remove them from config file
+        // Find repo or client and remove them fro dbm
         if crate::utils::config_file_found(&mut buffer) {
             let config: ConfigurationDoc = serde_json::from_str(&buffer)
                 .expect("Initialisation of ClientRepository struct from buffer failed");
@@ -453,7 +453,7 @@ impl Remove for Config {
                     Option::from(&options[0]),
                 )
                 .unwrap_or_else(|err| {
-                    eprintln!("Error trying to read from config file: {}", err);
+                    eprintln!("Error trying to read from db: {}", err);
                     std::process::exit(exitcode::DATAERR);
                 });
 
@@ -465,9 +465,8 @@ impl Remove for Config {
                 // if there are no clients, lets remove the file and next time will be onboarding
                 //TODO - would be nice to improve this
                 if deserialized_config.is_empty() {
-                    crate::utils::db::db_reader::delete_db().expect(
-                        "Config file was empty so autolog tried to remove it. That failed.",
-                    );
+                    crate::utils::db::db_reader::delete_db()
+                        .expect("Con db empty so autolog tried to remove it. That failed.");
                     exit_process();
                     return;
                 }
@@ -488,7 +487,7 @@ pub trait Update {
 
 impl Update for Config {
     fn update(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
-        // try to read config file. Write a new one if it doesn't exist
+        // try to read db. Write a new one if it doesn't exist
         let mut buffer = String::new();
         self.find_or_create_db(&mut buffer, prompt);
 
@@ -504,7 +503,7 @@ impl Update for Config {
                     Option::from(&options[0]),
                 )
                 .unwrap_or_else(|err| {
-                    eprintln!("Error trying to read from config file: {}", err);
+                    eprintln!("Error trying to read from db: {}", err);
                     std::process::exit(exitcode::DATAERR);
                 });
 
@@ -537,7 +536,7 @@ pub trait List {
 
 impl List for Config {
     fn list(&self, prompt: &mut HelpPrompt) {
-        // try to read config file. Write a new one if it doesn't exist
+        // try to read db. Write a new one if it doesn't exist
         let mut buffer = String::new();
         self.find_or_create_db(&mut buffer, prompt);
 
@@ -724,7 +723,7 @@ mod tests {
             true
         );
 
-        // internally this will find the same test config file as above
+        // internally this will find the same test db as above
         let mut after_deserialized_config: ConfigurationDoc = vec![];
 
         config.remove(options, &mut prompt, &mut after_deserialized_config);
@@ -767,7 +766,7 @@ mod tests {
             true
         );
 
-        // internally this will find the same test config file as above
+        // internally this will find the same test db as above
         let mut after_deserialized_config: ConfigurationDoc = vec![];
 
         config.remove(options, &mut prompt, &mut after_deserialized_config);
