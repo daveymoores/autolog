@@ -1,6 +1,6 @@
 use crate::utils::date::date_parser::{
-    check_for_valid_day, check_for_valid_month, check_for_valid_year, create_single_day_object,
-    DayMap, TimesheetYears,
+    DayMap, TimesheetYears, check_for_valid_day, check_for_valid_month, check_for_valid_year,
+    create_single_day_object,
 };
 use chrono::{DateTime, Datelike};
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use std::process::{Command, Output};
 
 pub type GitLogDates = HashMap<i32, HashMap<u32, HashSet<u32>>>;
 
-/// Holds the data from the config file. Config can access these values
+/// Holds the data from the db. Config can access these values
 // and perform various operations on it
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -430,7 +430,7 @@ impl Repository {
 mod tests {
     use super::*;
     use crate::helpers::mocks;
-    use serde_json::{json, Map, Number};
+    use serde_json::{Map, Number, json};
     use std::os::unix::process::ExitStatusExt;
     use std::process::ExitStatus;
 

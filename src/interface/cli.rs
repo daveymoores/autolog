@@ -5,7 +5,7 @@ use crate::data::client_repositories::ClientRepositories;
 use crate::data::repository;
 use crate::data::repository::Repository;
 use crate::interface::help_prompt::{ConfigurationDoc, HelpPrompt};
-use crate::utils::file::file_reader;
+use crate::utils::db::db_reader;
 use chrono::prelude::*;
 use clap::{App, Arg, ArgMatches, Error};
 use std::ffi::OsString;
@@ -195,7 +195,7 @@ impl Cli<'_> {
         let month = date_time.month().to_string();
         let day = date_time.day().to_string();
 
-        let current_repo_path = file_reader::get_canonical_path(".");
+        let current_repo_path = db_reader::get_canonical_path(".");
         let mut temp_repository = Repository {
             repo_path: Option::from(current_repo_path.clone()),
             ..Default::default()

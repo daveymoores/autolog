@@ -1,6 +1,6 @@
 use crate::data::client_repositories::ClientRepositories;
 use crate::data::repository::Repository;
-use crate::utils::file::file_reader;
+use crate::utils::db::db_reader;
 use ansi_term::Style;
 use ascii_table::AsciiTable;
 /// Help prompt handles all of the interactions with the user.
@@ -388,7 +388,7 @@ impl<'a> HelpPrompt<'a> {
             ascii_table.print(logo);
         }
 
-        let current_repo_path = file_reader::get_canonical_path(".");
+        let current_repo_path = db_reader::get_canonical_path(".");
         if path == current_repo_path {
             Self::print_question("Initialise for current repository?");
         } else {
@@ -418,7 +418,9 @@ impl<'a> HelpPrompt<'a> {
         name: String,
         email: String,
     ) -> Result<&mut Self, Box<dyn std::error::Error>> {
-        println!("\nThe git config name or email found for this repository differs from the one being used for your user details.");
+        println!(
+            "\nThe git config name or email found for this repository differs from the one being used for your user details."
+        );
         println!(
             "{}",
             Self::dim_text(
@@ -522,9 +524,12 @@ impl<'a> HelpPrompt<'a> {
 
         if prompt_for_approver {
             Self::print_question("Do timesheets under this client require approval?");
-            println!("{}", Self::dim_text(
-            "(This will enable signing functionality, see https://autolog.dev/docs/signing)",
-            ));
+            println!(
+                "{}",
+                Self::dim_text(
+                    "(This will enable signing functionality, see https://autolog.dev/docs/signing)",
+                )
+            );
 
             if Confirm::new().default(true).interact()? {
                 Self::print_question("Approvers name");
