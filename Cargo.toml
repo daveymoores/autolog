@@ -27,7 +27,6 @@ tempfile = "3.2.0"
 ascii_table = "3.0.2"
 ansi_term = "0.12.1"
 envtestkit = "1.1.2"
-google-calendar3 = "5.0.5"
 http-body-util = "0.1"
 async-trait = "0.1"
 rusqlite = { version = "0.34.0", features = ["bundled"] }

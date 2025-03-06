@@ -1,7 +1,12 @@
 on:
   push:
     branches:
-      - main
+      - development
+      - "feature/**"
+  pull_request:
+    branches:
+      - development
+      - "feature/**"
 
 name: Production checks
 

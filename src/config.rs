@@ -2,17 +2,11 @@ use crate::data::client_repositories::ClientRepositories;
 use crate::data::repository::Repository;
 use crate::interface::help_prompt::ConfigurationDoc;
 use crate::interface::help_prompt::HelpPrompt;
+use crate::utils::db::db_reader;
 use crate::utils::exit_process;
 use crate::utils::file::file_reader::serialize_config;
 use crate::utils::link::link_builder;
-extern crate google_calendar3 as calendar3;
-use crate::utils::db::db_reader;
-use calendar3::{hyper, hyper_rustls, oauth2};
-use dirs::home_dir;
-use std::path::PathBuf;
 use std::process;
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
 
 /// Creates and modifies the  db Config does not directly hold the information
 /// contained in the  db but provides the various operations that can be
@@ -192,43 +186,6 @@ impl Config {
             Config::write_to_db(Option::Some(&mut client_repositories), None);
             crate::interface::help_prompt::HelpPrompt::show_write_new_config_success();
         }
-    }
-
-    async fn save_token(
-        self,
-        token: &oauth2::AccessToken,
-        path: &PathBuf,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let token_json = serde_json::to_string(token)?;
-        let mut file = File::create(path).await?;
-        file.write_all(token_json.as_bytes()).await?;
-        Ok(())
-    }
-
-    async fn load_token(
-        self,
-        path: &PathBuf,
-    ) -> Result<oauth2::AccessToken, Box<dyn std::error::Error>> {
-        let token_json = tokio::fs::read_to_string(path).await?;
-        let token: oauth2::AccessToken = serde_json::from_str(&token_json)?;
-        Ok(token)
-    }
-
-    async fn create_authenticator(
-        self,
-        secret: oauth2::ApplicationSecret,
-        token_path: PathBuf,
-    ) -> oauth2::authenticator::Authenticator<
-        hyper_rustls::HttpsConnector<hyper::client::HttpConnector>,
-    > {
-        oauth2::InstalledFlowAuthenticator::builder(
-            secret,
-            oauth2::InstalledFlowReturnMethod::HTTPRedirect,
-        )
-        .persist_tokens_to_disk(token_path) // Automatically save tokens to disk
-        .build()
-        .await
-        .unwrap()
     }
 }
 
@@ -545,74 +502,6 @@ impl List for Config {
                 .expect("Initialisation of ClientRepository struct from buffer failed");
 
             prompt.list_clients_and_repos(deserialized_config);
-        }
-    }
-}
-
-pub trait Link {
-    /// List repositories under each client
-    fn link(&self, options: Vec<Option<String>>);
-}
-
-impl Link for Config {
-    #[tokio::main]
-    async fn link(&self, options: Vec<Option<String>>) {
-        let home_dir = home_dir().expect("Could not find home directory");
-        let token_path = home_dir.join(".autolog.token");
-
-        crate::interface::help_prompt::HelpPrompt::oauth2_authenticating();
-
-        if let Some(service) = options.get(0).and_then(|s| s.as_deref()) {
-            match service {
-                "gcal" => {
-                    // Load the credentials file
-                    let secret = oauth2::read_application_secret("client_secret.json")
-                        .await
-                        .expect("client_secret.json file not found");
-
-                    if token_path.exists() {
-                        // Load the token from the file
-                        let token = self
-                            .load_token(&token_path)
-                            .await
-                            .expect("Failed to load token");
-
-                        // Check if the token is valid
-                        if token.is_expired() {
-                            crate::interface::help_prompt::HelpPrompt::show_oauth2_expired_token(
-                                service,
-                            );
-                            let auth = self.create_authenticator(secret, token_path.clone()).await;
-                            let token = auth
-                                .token(&["https://www.googleapis.com/auth/calendar"])
-                                .await
-                                .unwrap();
-                            self.save_token(&token, &token_path)
-                                .await
-                                .expect("Failed to save token");
-                            crate::interface::help_prompt::HelpPrompt::show_oauth2_success(service)
-                        } else {
-                            crate::interface::help_prompt::HelpPrompt::oauth2_link_valid(service)
-                        }
-                    } else {
-                        // Create a new token
-                        let auth = self.create_authenticator(secret, token_path.clone()).await;
-                        let token = auth
-                            .token(&["https://www.googleapis.com/auth/calendar"])
-                            .await
-                            .unwrap();
-                        self.save_token(&token, &token_path)
-                            .await
-                            .expect("Failed to save token");
-                        crate::interface::help_prompt::HelpPrompt::show_oauth2_success(service)
-                    }
-                }
-                _ => {
-                    println!("Unsupported service: {}", service);
-                }
-            }
-        } else {
-            println!("No service specified.");
         }
     }
 }

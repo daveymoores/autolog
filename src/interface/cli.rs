@@ -1,6 +1,6 @@
 extern crate clap;
 use crate::config;
-use crate::config::{Edit, Init, Link, List, Make, New, Remove, Update};
+use crate::config::{Edit, Init, List, Make, New, Remove, Update};
 use crate::data::client_repositories::ClientRepositories;
 use crate::data::repository;
 use crate::data::repository::Repository;
@@ -18,7 +18,6 @@ pub enum Commands {
     Remove,
     Update,
     List,
-    Link,
 }
 
 #[derive(Debug, Default)]
@@ -147,14 +146,6 @@ impl Cli<'_> {
                     )))
             .subcommand(App::new("list")
                 .about("List all clients and associated repositories"))
-            .subcommand(App::new("link")
-                .about("Link to calendar service")
-                .arg(Arg::with_name("service")
-                    .short("s")
-                    .long("service")
-                    .value_name("service")
-                    .help("Required service name. Currently only supports gcal",
-                    ).required(true)))
             .subcommand(App::new("make")
                 .about("Generate a new timesheet on a unique link")
                 .arg(Arg::with_name("client")
@@ -253,9 +244,6 @@ impl Cli<'_> {
             command = Some(Commands::Update);
         } else if matches.subcommand_matches("list").is_some() {
             command = Some(Commands::List);
-        } else if let Some(link) = matches.subcommand_matches("link") {
-            options.push(Some(link.value_of("service").unwrap().to_string()));
-            command = Some(Commands::Link);
         } else {
             return Err(Error {
                 message: "No matches for inputs".to_string(),
@@ -303,7 +291,7 @@ impl Cli<'_> {
         prompt: &mut HelpPrompt,
         mut deserialized_config: ConfigurationDoc,
     ) where
-        T: Init + Make + Edit + Update + Remove + List + Link,
+        T: Init + Make + Edit + Update + Remove + List,
     {
         match cli.command {
             None => {
@@ -316,7 +304,6 @@ impl Cli<'_> {
                 Commands::Remove => config.remove(cli.options, prompt, &mut deserialized_config),
                 Commands::Update => config.update(cli.options, prompt),
                 Commands::List => config.list(prompt),
-                Commands::Link => config.link(cli.options),
             },
         }
     }
@@ -348,7 +335,7 @@ mod tests {
     where
         I: Iterator<Item = T>,
         T: Into<OsString> + Clone,
-        K: Init + Make + Edit + Update + Remove + List + Link,
+        K: Init + Make + Edit + Update + Remove + List,
     {
         let cli = Cli::new_from(commands).unwrap();
         let new_cli = cli.parse_commands(&cli.matches);
@@ -410,12 +397,6 @@ mod tests {
 
     impl List for MockConfig {
         fn list(&self, _prompt: &mut HelpPrompt) {
-            assert!(true);
-        }
-    }
-
-    impl Link for MockConfig {
-        fn link(&self, _options: Vec<Option<String>>) {
             assert!(true);
         }
     }
