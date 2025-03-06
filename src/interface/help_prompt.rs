@@ -138,34 +138,6 @@ impl<'a> HelpPrompt<'a> {
         ));
     }
 
-    pub fn oauth2_authenticating() {
-        println!(
-            "{}",
-            Self::dim_text("\u{1F916} service being authenticated...")
-        );
-    }
-
-    pub fn show_oauth2_success(service: &str) {
-        println!("\n{} successfully authenticated \u{1F389}", service);
-        crate::utils::exit_process();
-    }
-
-    pub fn show_oauth2_expired_token(service: &str) {
-        println!(
-            "\nToken for {} has expired. Please re-authenticate.",
-            service
-        );
-        crate::utils::exit_process();
-    }
-
-    pub fn oauth2_link_valid(service: &str) {
-        println!(
-            "\nToken for {} is still valid. \nRun 'autolog make' to create a timesheet.",
-            service
-        );
-        crate::utils::exit_process();
-    }
-
     fn take_and_validate_email(initial_text: Option<&str>) -> futures::io::Result<String> {
         let text = initial_text.unwrap_or_default();
 
