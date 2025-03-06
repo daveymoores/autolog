@@ -12,6 +12,43 @@ use std::path::PathBuf;
 
 const DB_FILE_NAME: &str = "autolog.db";
 
+/// Directly load configuration document from database
+pub fn load_config_doc_from_db() -> Result<ConfigurationDoc, Box<dyn std::error::Error>> {
+    let conn = get_connection()?;
+    load_config_doc(&conn)
+}
+
+/// Directly save configuration document to database
+pub fn save_config_doc_to_db(
+    config_doc: &ConfigurationDoc,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if is_test_mode() {
+        return Ok(());
+    }
+
+    let mut conn = get_connection()?;
+    let tx = conn.transaction()?;
+
+    // Try to write each client repository to the database
+    let result = (|| {
+        for client_repo in config_doc.iter() {
+            save_client_repository(&tx, client_repo)?;
+        }
+        Ok(())
+    })();
+
+    // Only commit if everything succeeded
+    if result.is_ok() {
+        tx.commit()?;
+    } else {
+        let _ = tx.rollback();
+        println!("Changes rolled back due to error");
+        return result;
+    }
+
+    Ok(())
+}
+
 /// Get the platform-specific path for the database
 pub fn get_db_path() -> PathBuf {
     if is_test_mode() {
