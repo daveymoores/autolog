@@ -40,10 +40,6 @@ pub fn generate_random_path() -> String {
     generate(10, charset)
 }
 
-pub fn config_file_found(buffer: &mut str) -> bool {
-    !buffer.is_empty()
-}
-
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
@@ -69,18 +65,6 @@ mod tests {
         let _test = set_env(OsString::from("TEST_MODE"), "false");
 
         assert_eq!(is_test_mode(), false);
-    }
-
-    #[test]
-    fn should_return_true_if_config_file_is_found() {
-        let mut buffer = String::new();
-        assert_eq!(config_file_found(&mut buffer), false);
-    }
-
-    #[test]
-    fn should_return_false_if_config_file_is_not_found() {
-        let mut buffer = String::from("buffer is full");
-        assert_eq!(config_file_found(&mut buffer), true);
     }
 
     #[test]
