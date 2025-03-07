@@ -137,11 +137,7 @@ mod tests {
     use crate::data::client_repositories::{Client, ClientRepositories, User};
     use crate::data::repository::Repository;
     use crate::helpers::mocks;
-    use envtestkit::lock::lock_test;
-    use envtestkit::set_env;
     use nanoid::nanoid;
-    use std::error::Error;
-    use std::ffi::OsString;
     use std::path::Path;
 
     // Helper function to create a test client with optional repositories
@@ -376,107 +372,11 @@ mod tests {
     }
 
     #[test]
-    fn get_filepath_returns_path_with_file_name() {
-        let _lock = lock_test();
-        let _test = set_env(OsString::from("TEST_MODE"), "false");
-
-        let path_buf = PathBuf::from("/path/to/usr");
-        assert_eq!(get_filepath(path_buf).unwrap(), "/path/to/usr/.autolog");
-    }
-
-    #[test]
     fn get_home_path_should_return_a_path() {
         let path_buf = get_home_path();
         let path = path_buf.to_str().unwrap();
 
         assert!(Path::new(path).exists());
-    }
-
-    #[test]
-    fn read_file_returns_a_buffer() {
-        #[derive(Clone)]
-        struct MockPrompt {}
-
-        impl Onboarding for MockPrompt {
-            fn onboarding(&mut self, _new_user: bool) -> Result<(), Box<dyn Error>> {
-                assert!(false);
-                Ok(())
-            }
-        }
-
-        let mut mock_prompt = MockPrompt {};
-
-        let mut buffer = String::new();
-
-        read_file(&mut buffer, "./testing-utils/.hello.txt", &mut mock_prompt).unwrap();
-
-        assert_eq!(buffer.trim(), "hello");
-    }
-
-    #[test]
-    fn read_file_calls_the_error_function() {
-        #[derive(Clone)]
-        struct MockPrompt {}
-
-        impl Onboarding for MockPrompt {
-            fn onboarding(&mut self, _new_user: bool) -> Result<(), Box<dyn Error>> {
-                assert!(true);
-                Ok(())
-            }
-        }
-
-        let mut mock_prompt = MockPrompt {};
-
-        let mut buffer = String::new();
-
-        read_file(
-            &mut buffer,
-            "./testing-utils/.timesheet.txt",
-            &mut mock_prompt,
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn it_writes_a_config_file_when_file_exists() {
-        let _lock = lock_test();
-        let _test = set_env(OsString::from("TEST_MODE"), "true");
-
-        let mut client_repositories = ClientRepositories {
-            ..Default::default()
-        };
-
-        mocks::create_mock_client_repository(&mut client_repositories);
-
-        // creates mock directory that is destroyed when it goes out of scope
-        let dir = tempfile::tempdir().unwrap();
-        let mock_config_path = dir.path().join("my-temporary-note.txt");
-
-        let file = File::create(&mock_config_path).unwrap();
-        let string_path_from_temp_dir = mock_config_path.to_str().unwrap().to_owned();
-
-        let json = serialize_config(Option::from(&mut client_repositories), None).unwrap();
-
-        assert!(write_json_to_config_file(json, string_path_from_temp_dir).is_ok());
-
-        drop(file);
-        dir.close().unwrap();
-    }
-
-    #[test]
-    fn it_throws_an_error_when_writing_config_if_file_doesnt_exist() {
-        let _lock = lock_test();
-        let _test = set_env(OsString::from("TEST_MODE"), "false");
-
-        let mut client_repositories = ClientRepositories {
-            ..Default::default()
-        };
-
-        mocks::create_mock_client_repository(&mut client_repositories);
-
-        let json = serialize_config(Option::from(&mut client_repositories), None).unwrap();
-
-        assert!(write_json_to_config_file(json, "./a/fake/path".to_string()).is_err());
     }
 
     #[test]

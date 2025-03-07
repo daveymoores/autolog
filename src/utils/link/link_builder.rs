@@ -214,8 +214,8 @@ mod test {
     use crate::data::repository::Repository;
     use crate::helpers::mocks;
     use crate::utils::link::link_builder::{
-        build_document, calculate_total_hours, find_month_from_timesheet, generate_timesheet_vec,
-        get_string_month_year, Timesheet, TimesheetDocument,
+        Timesheet, TimesheetDocument, build_document, calculate_total_hours,
+        find_month_from_timesheet, generate_timesheet_vec, get_string_month_year,
     };
     use chrono::{TimeZone, Utc};
     use expect_test::expect_file;

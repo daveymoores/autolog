@@ -269,7 +269,9 @@ impl ClientRepositories {
 
                     repository.parse_git_log_dates_from_git_history(output_string);
                 } else {
-                    eprint!("Could not parse git log dates from git history. Repository name is missing")
+                    eprint!(
+                        "Could not parse git log dates from git history. Repository name is missing"
+                    )
                 }
             }
         }

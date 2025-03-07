@@ -583,7 +583,7 @@ mod tests {
         let _test = set_env(OsString::from("TEST_MODE"), "true");
 
         let mut buffer = String::new();
-        let namespace = "pila-app".to_string();
+        let namespace = "autolog".to_string();
         let config = Config::new();
         let options = vec![
             Option::from("apple".to_string()),
