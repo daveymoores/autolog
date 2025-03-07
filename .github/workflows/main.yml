@@ -1,10 +1,18 @@
+name: CI Checks
+
 on:
   push:
     branches:
       - main
   pull_request:
 
-name: CI Checks
+env:
+  MONGODB_URI: ${{ secrets.MONGODB_URI }}
+  AUTOLOG_URI: ${{ secrets.AUTOLOG_URI }}
+  MONGODB_DB: ${{ secrets.MONGODB_DB }}
+  EXPIRE_TIME_SECONDS: ${{ secrets.EXPIRE_TIME_SECONDS }}
+  MONGODB_COLLECTION: ${{ secrets.MONGODB_COLLECTION }}
+  TEST_MODE: ${{ secrets.TEST_MODE }}
 
 jobs:
   check:
@@ -22,13 +30,6 @@ jobs:
 
       - name: Run cargo check
         uses: actions-rs/cargo@v1
-        env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          AUTOLOG_URI: ${{ secrets.AUTOLOG_URI }}
-          MONGODB_DB: ${{ secrets.MONGODB_DB }}
-          EXPIRE_TIME_SECONDS: ${{ secrets.EXPIRE_TIME_SECONDS }}
-          MONGODB_COLLECTION: ${{ secrets.MONGODB_COLLECTION }}
-          TEST_MODE: ${{ secrets.TEST_MODE }}
         with:
           command: check
 
@@ -47,24 +48,21 @@ jobs:
 
       - name: Run cargo test
         uses: actions-rs/cargo@v1
-        env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          AUTOLOG_URI: ${{ secrets.AUTOLOG_URI }}
-          MONGODB_DB: ${{ secrets.MONGODB_DB }}
-          EXPIRE_TIME_SECONDS: ${{ secrets.EXPIRE_TIME_SECONDS }}
-          MONGODB_COLLECTION: ${{ secrets.MONGODB_COLLECTION }}
-          TEST_MODE: ${{ secrets.TEST_MODE }}
         with:
           command: test
 
-      - name: Run cargo-tarpaulin
-        uses: actions-rs/tarpaulin@v0.1
-        with:
-          version: "0.15.0"
-          args: "-- --test-threads 1"
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Upload to codecov.io
+      - name: Generate code coverage
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: false
 
       - name: Archive code coverage results
         uses: actions/upload-artifact@v4
@@ -88,13 +86,6 @@ jobs:
 
       - name: Run cargo fmt
         uses: actions-rs/cargo@v1
-        env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          AUTOLOG_URI: ${{ secrets.AUTOLOG_URI }}
-          MONGODB_DB: ${{ secrets.MONGODB_DB }}
-          EXPIRE_TIME_SECONDS: ${{ secrets.EXPIRE_TIME_SECONDS }}
-          MONGODB_COLLECTION: ${{ secrets.MONGODB_COLLECTION }}
-          TEST_MODE: ${{ secrets.TEST_MODE }}
         with:
           command: fmt
           args: --all -- --check
