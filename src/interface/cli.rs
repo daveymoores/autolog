@@ -4,7 +4,7 @@ use crate::config::{Edit, Init, List, Make, New, Remove, Update};
 use crate::data::client_repositories::ClientRepositories;
 use crate::data::repository;
 use crate::data::repository::Repository;
-use crate::interface::help_prompt::{ConfigurationDoc, HelpPrompt};
+use crate::interface::help_prompt::HelpPrompt;
 use crate::utils::db::db_reader;
 use chrono::prelude::*;
 use clap::{App, Arg, ArgMatches, Error};
@@ -278,19 +278,13 @@ impl Cli<'_> {
             &mut client_repositories,
         );
 
-        let deserialized_config: ConfigurationDoc = vec![];
-
-        Self::run_command(cli, &mut config, &mut prompt, deserialized_config);
+        Self::run_command(cli, &mut config, &mut prompt);
 
         Ok(())
     }
 
-    pub fn run_command<T>(
-        cli: Cli<'_>,
-        config: &mut T,
-        prompt: &mut HelpPrompt,
-        mut deserialized_config: ConfigurationDoc,
-    ) where
+    pub fn run_command<T>(cli: Cli<'_>, config: &mut T, prompt: &mut HelpPrompt)
+    where
         T: Init + Make + Edit + Update + Remove + List,
     {
         match cli.command {
@@ -301,7 +295,7 @@ impl Cli<'_> {
                 Commands::Init => config.init(cli.options, prompt),
                 Commands::Make => config.make(cli.options, prompt),
                 Commands::Edit => config.edit(cli.options, prompt),
-                Commands::Remove => config.remove(cli.options, prompt, &mut deserialized_config),
+                Commands::Remove => config.remove(cli.options, prompt),
                 Commands::Update => config.update(cli.options, prompt),
                 Commands::List => config.list(prompt),
             },
@@ -349,9 +343,7 @@ mod tests {
             &mut client_repositories,
         );
 
-        let deserialized_config: ConfigurationDoc = vec![];
-
-        Cli::run_command(response, &mut mock_config, &mut prompt, deserialized_config);
+        Cli::run_command(response, &mut mock_config, &mut prompt);
     }
 
     struct MockConfig {}
@@ -385,12 +377,7 @@ mod tests {
     }
 
     impl Remove for MockConfig {
-        fn remove(
-            &self,
-            _options: Vec<Option<String>>,
-            _prompt: &mut HelpPrompt,
-            _deserialized_config: &mut ConfigurationDoc,
-        ) {
+        fn remove(&self, _options: Vec<Option<String>>, _prompt: &mut HelpPrompt) {
             assert!(true);
         }
     }
