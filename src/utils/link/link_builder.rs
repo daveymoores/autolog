@@ -21,6 +21,7 @@ struct Timesheet {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct TimesheetDocument {
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     creation_date: DateTime<Utc>,
     random_path: String,
     month_year: String,
@@ -187,7 +188,6 @@ pub async fn build_unique_uri(
                             "key": { "creation_date": 1 },
                             "name": "expiration_date",
                             "expireAfterSeconds": expire_time_seconds,
-                            "unique": true
                         },
                     ]
                 },
