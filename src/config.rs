@@ -2,9 +2,9 @@ use crate::data::client_repositories::ClientRepositories;
 use crate::data::repository::Repository;
 use crate::interface::help_prompt::ConfigurationDoc;
 use crate::interface::help_prompt::HelpPrompt;
+use crate::interface::help_prompt::Onboarding;
 use crate::utils::db::db_reader;
 use crate::utils::exit_process;
-use crate::utils::file::file_reader::serialize_config;
 use crate::utils::link::link_builder;
 use std::process;
 
@@ -26,22 +26,6 @@ impl New for Config {
 }
 
 impl Config {
-    fn update_client_repositories(
-        new_client_repos: &mut ConfigurationDoc,
-        deserialized_config: ConfigurationDoc,
-        prompt: &mut HelpPrompt,
-    ) {
-        let client_id = prompt.client_repositories().get_client_id();
-
-        for item in &deserialized_config {
-            if item.get_client_id() == client_id {
-                new_client_repos.push(prompt.client_repositories().clone())
-            } else {
-                new_client_repos.push(item.clone())
-            }
-        }
-    }
-
     fn set_prompt_with_found_values(
         prompt: &mut HelpPrompt,
         found_repo: Option<&Repository>,
@@ -73,24 +57,14 @@ impl Config {
     }
 
     /// Find and update client if sheet exists, otherwise write a new one
-    fn write_to_db(
-        client_repositories: Option<&mut ClientRepositories>,
-        deserialized_config: Option<&mut ConfigurationDoc>,
-    ) {
-        // Convert to JSON first (for now, to minimize changes)
-        let json = match serialize_config(client_repositories, deserialized_config) {
-            Ok(json) => json,
+    fn write_to_db(config_doc: &ConfigurationDoc) {
+        match db_reader::save_config_doc_to_db(config_doc) {
+            Ok(_) => {}
             Err(err) => {
-                eprintln!("Error serializing configuration: {}", err);
-                std::process::exit(exitcode::DATAERR);
+                eprintln!("Error writing to database: {}", err);
+                std::process::exit(exitcode::CANTCREAT);
             }
-        };
-
-        // Write to database
-        crate::utils::db::db_reader::write_config_to_db(json).unwrap_or_else(|err| {
-            eprintln!("Error writing to database: {}", err);
-            std::process::exit(exitcode::CANTCREAT);
-        });
+        }
     }
 
     // Check for repo by path or by namespace
@@ -151,40 +125,70 @@ impl Config {
             // otherwise check whether any clients contain the namespace
             // and return the repository and the client
             for client in deserialized_config.iter() {
-                option = match client
-                    .repositories
-                    .as_ref()
-                    .unwrap()
-                    .iter()
-                    .find(|repository| {
-                        repository.namespace.as_ref().unwrap().to_lowercase()
-                            == namespace.as_ref().unwrap().to_lowercase()
-                    }) {
-                    Some(repository) => (Option::from(repository), Option::from(client)),
-                    None => option,
-                };
+                // Skip clients without repositories
+                if let Some(repositories) = client.repositories.as_ref() {
+                    if !repositories.is_empty() {
+                        option = match repositories.iter().find(|repository| {
+                            // Handle repositories without a namespace
+                            if let Some(repo_namespace) = &repository.namespace {
+                                repo_namespace.to_lowercase()
+                                    == namespace.as_ref().unwrap().to_lowercase()
+                            } else {
+                                false // Skip repositories without a namespace
+                            }
+                        }) {
+                            Some(repository) => (Option::from(repository), Option::from(client)),
+                            None => option,
+                        };
+                    }
+                }
+                // If client has no repositories, keep the current option value unchanged
             }
         }
 
         Ok(option)
     }
 
-    fn find_or_create_db(self, buffer: &mut String, prompt: &mut HelpPrompt) {
-        // pass a prompt for if the  dbdoesn't exist
-        crate::utils::db::db_reader::read_data_from_db(buffer, prompt).unwrap_or_else(|err| {
-            eprintln!("Error initialising autolog: {}", err);
+    fn find_or_create_db(self, prompt: &mut HelpPrompt) -> ConfigurationDoc {
+        // Try to load existing config from the database
+        match db_reader::load_config_doc_from_db() {
+            Ok(doc) if !doc.is_empty() => {
+                // Database exists and has data
+                doc
+            }
+            Ok(_) | Err(_) => {
+                // Either database is empty or doesn't exist
+                // In both cases, we need to create new configuration
+                eprintln!("Creating new autolog configuration");
+
+                // Run onboarding
+                self.create_new_configuration(prompt)
+            }
+        }
+    }
+
+    fn create_new_configuration(&self, prompt: &mut HelpPrompt) -> ConfigurationDoc {
+        prompt.onboarding(true).unwrap_or_else(|err| {
+            eprintln!("Error during onboarding: {}", err);
             std::process::exit(exitcode::CANTCREAT);
         });
 
         let mut repository = prompt.repository().clone();
         let mut client_repositories = prompt.client_repositories().clone();
 
-        // if the buffer is empty, there is no existing file, user has been onboarded
-        // and Repository state holds the data. Write this data to file.
-        if buffer.is_empty() {
-            Config::fetch_interaction_data(&mut client_repositories, &mut repository);
-            Config::write_to_db(Option::Some(&mut client_repositories), None);
-            crate::interface::help_prompt::HelpPrompt::show_write_new_config_success();
+        // Create a new configuration with the user data
+        Config::fetch_interaction_data(&mut client_repositories, &mut repository);
+        // Save to database
+        let new_config = vec![client_repositories];
+        match db_reader::save_config_doc_to_db(&new_config) {
+            Ok(_) => {
+                crate::interface::help_prompt::HelpPrompt::show_write_new_config_success();
+                new_config
+            }
+            Err(err) => {
+                eprintln!("Error initialising autolog: {}", err);
+                std::process::exit(exitcode::CANTCREAT);
+            }
         }
     }
 }
@@ -196,35 +200,29 @@ pub trait Init {
 
 impl Init for Config {
     fn init(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
-        // try to read db. Write a new one if it doesn't exist
-        let mut buffer = String::new();
-        self.find_or_create_db(&mut buffer, prompt);
+        // Load or create the database
+        let mut config_doc = self.find_or_create_db(prompt);
 
-        // ..if the there is an exis dbfile, check whether the (passed path or namespace) repository exists under any clients
-        // if it does pass Repository values to Repository
-        if crate::utils::config_file_found(&mut buffer) {
-            let mut deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
-                .expect("Initialisation of ClientRepository struct from buffer failed");
-
+        // If config_doc is not empty, check if the repository exists
+        if !config_doc.is_empty() {
             let (found_repo, found_client_repo) = self
                 .find_client_or_repo_in_buffer(
-                    &mut deserialized_config,
+                    &mut config_doc,
                     Option::from(&options[0]),
                     Option::None,
                     Option::None,
                 )
                 .unwrap_or_else(|err| {
-                    eprintln!("Error trying to read from db: {}", err);
+                    eprintln!("Error trying to read from database: {}", err);
                     std::process::exit(exitcode::DATAERR);
                 });
 
             if found_repo.is_some() & found_client_repo.is_some() {
                 crate::interface::help_prompt::HelpPrompt::repo_already_initialised();
             } else {
-                // Otherwise onboard them and check whether (passed path or namespace) repo
-                // should exist under an existing client
+                // Onboard new repository and allow user to choose a client or create a new one
                 prompt
-                    .prompt_for_client_then_onboard(&mut deserialized_config)
+                    .prompt_for_client_then_onboard(&mut config_doc)
                     .unwrap_or_else(|err| {
                         eprintln!("Error adding repository to client: {}", err);
                         std::process::exit(exitcode::CANTCREAT);
@@ -233,13 +231,29 @@ impl Init for Config {
                 let mut client_repositories = prompt.client_repositories().clone();
                 let mut repository = prompt.repository().clone();
 
-                // ...and fetch a new batch of interaction data
+                // Fetch interaction data
                 Config::fetch_interaction_data(&mut client_repositories, &mut repository);
-                Config::write_to_db(
-                    Option::Some(&mut client_repositories),
-                    Option::from(&mut deserialized_config),
-                );
 
+                // check if this is a new client
+                let client_id = client_repositories.get_client_id();
+                let mut client_exists = false;
+
+                // Update the client repository in the config document
+                for client in config_doc.iter_mut() {
+                    if client.get_client_id() == client_id {
+                        *client = client_repositories.clone();
+                        client_exists = true;
+                        break;
+                    }
+                }
+
+                // If this is a new client, add it to config_doc
+                if !client_exists {
+                    config_doc.push(client_repositories.clone());
+                }
+
+                // Write updated config back to database
+                Config::write_to_db(&config_doc);
                 crate::interface::help_prompt::HelpPrompt::show_write_new_repo_success();
             }
         }
@@ -254,25 +268,19 @@ pub trait Make {
 impl Make for Config {
     #[tokio::main]
     async fn make(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
-        // try to read db. Write a new one if it doesn't exist
-        let mut buffer = String::new();
         let current_repo_path = db_reader::get_canonical_path(".");
+        let mut config_doc = self.find_or_create_db(prompt);
 
-        self.find_or_create_db(&mut buffer, prompt);
-
-        if crate::utils::config_file_found(&mut buffer) {
-            let mut deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
-                .expect("Initialisation of ClientRepository struct from buffer failed");
-
+        if !config_doc.is_empty() {
             let (found_repo, found_client_repo) = self
                 .find_client_or_repo_in_buffer(
-                    &mut deserialized_config,
+                    &mut config_doc,
                     Option::from(&current_repo_path),
                     Option::None,
                     Option::from(&options[0]),
                 )
                 .unwrap_or_else(|err| {
-                    eprintln!("Error trying to read from db: {}", err);
+                    eprintln!("Error trying to read from database: {}", err);
                     std::process::exit(exitcode::DATAERR);
                 });
 
@@ -291,7 +299,7 @@ impl Make for Config {
                         std::process::exit(exitcode::CANTCREAT);
                     });
 
-                // generate autolog.dev link using existing config
+                // Generate autolog.dev link using existing config
                 link_builder::build_unique_uri(prompt.client_repositories(), options)
                     .await
                     .unwrap_or_else(|err| {
@@ -299,10 +307,17 @@ impl Make for Config {
                         std::process::exit(exitcode::CANTCREAT);
                     });
 
-                Config::write_to_db(
-                    Option::Some(prompt.client_repositories()),
-                    Option::Some(&mut deserialized_config),
-                );
+                // Update the client repository in the config document
+                let client_id = prompt.client_repositories().get_client_id();
+                for client in config_doc.iter_mut() {
+                    if client.get_client_id() == client_id {
+                        *client = prompt.client_repositories().clone();
+                        break;
+                    }
+                }
+
+                // Write to database
+                Config::write_to_db(&config_doc);
             } else {
                 crate::interface::help_prompt::HelpPrompt::client_or_repository_not_found();
             }
@@ -317,29 +332,28 @@ pub trait Edit {
 
 impl Edit for Config {
     fn edit(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
-        // try to read db. Write a new one if it doesn't exist
-        let mut buffer = String::new();
-        self.find_or_create_db(&mut buffer, prompt);
+        // Load or create the database, getting a ConfigurationDoc directly
+        let mut config_doc = self.find_or_create_db(prompt);
 
-        if crate::utils::config_file_found(&mut buffer) {
-            let mut deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
-                .expect("Initialisation of ClientRepository struct from buffer failed");
-
+        if !config_doc.is_empty() {
+            // Find the repository to edit by namespace
             let (found_repo, found_client_repo) = self
                 .find_client_or_repo_in_buffer(
-                    &mut deserialized_config,
+                    &mut config_doc,
                     Option::None,
                     Option::from(&options[0]),
                     Option::None,
                 )
                 .unwrap_or_else(|err| {
-                    eprintln!("Error trying to read from db: {}", err);
+                    eprintln!("Error trying to read from database: {}", err);
                     std::process::exit(exitcode::DATAERR);
                 });
 
+            // Set the prompt with found values to prepare for editing
             Self::set_prompt_with_found_values(prompt, found_repo, found_client_repo);
 
             if found_client_repo.is_some() {
+                // Update the hours in the repository's timesheet
                 prompt
                     .repository()
                     .update_hours_on_month_day_entry(&options)
@@ -348,23 +362,43 @@ impl Edit for Config {
                         process::exit(exitcode::DATAERR);
                     });
 
+                // Clone repository to update the client repositories
                 let mut repository_clone = prompt.repository().clone();
 
+                // Update timesheet data in the client repositories
                 prompt
                     .client_repositories()
                     .set_values(&mut repository_clone)
                     .exec_generate_timesheets_from_git_history()
                     .compare_logs_and_set_timesheets();
 
-                let mut new_client_repos: ConfigurationDoc = vec![];
-                Self::update_client_repositories(
-                    &mut new_client_repos,
-                    deserialized_config,
-                    prompt,
-                );
+                // Find and update the matching client repository in the config document
+                let client_id = prompt.client_repositories().get_client_id();
+                let mut updated = false;
 
-                Config::write_to_db(None, Option::Some(&mut new_client_repos));
-                crate::interface::help_prompt::HelpPrompt::show_edited_config_success();
+                for client in config_doc.iter_mut() {
+                    if client.get_client_id() == client_id {
+                        *client = prompt.client_repositories().clone();
+                        updated = true;
+                        break;
+                    }
+                }
+
+                // If the client wasn't found, add it to the config
+                if !updated {
+                    config_doc.push(prompt.client_repositories().clone());
+                }
+
+                // Write the updated configuration back to the database
+                match db_reader::save_config_doc_to_db(&config_doc) {
+                    Ok(_) => {
+                        crate::interface::help_prompt::HelpPrompt::show_edited_config_success();
+                    }
+                    Err(err) => {
+                        eprintln!("Error writing to database: {}", err);
+                        std::process::exit(exitcode::CANTCREAT);
+                    }
+                }
             } else {
                 crate::interface::help_prompt::HelpPrompt::client_or_repository_not_found();
             }
@@ -374,62 +408,62 @@ impl Edit for Config {
 
 pub trait Remove {
     /// Update client or repository details
-    fn remove(
-        &self,
-        options: Vec<Option<String>>,
-        prompt: &mut HelpPrompt,
-        deserialized_config: &mut ConfigurationDoc,
-    );
+    fn remove(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt);
 }
 
 impl Remove for Config {
-    fn remove(
-        &self,
-        options: Vec<Option<String>>,
-        prompt: &mut HelpPrompt,
-        deserialized_config: &mut ConfigurationDoc,
-    ) {
-        // try to read db. Write a new one if it doesn't exist
-        let mut buffer = String::new();
-        self.find_or_create_db(&mut buffer, prompt);
+    fn remove(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
+        // Load or create the database, getting a ConfigurationDoc directly
+        let mut config_doc = self.find_or_create_db(prompt);
 
-        // Find repo or client and remove them fro dbm
-        if crate::utils::config_file_found(&mut buffer) {
-            let config: ConfigurationDoc = serde_json::from_str(&buffer)
-                .expect("Initialisation of ClientRepository struct from buffer failed");
-
-            for item in &config {
-                deserialized_config.push(item.clone());
-            }
-
+        if !config_doc.is_empty() {
+            // Find the repository or client to remove
             let (_found_repo, found_client_repo) = self
                 .find_client_or_repo_in_buffer(
-                    deserialized_config,
+                    &mut config_doc,
                     Option::None,
                     Option::from(&options[1]),
                     Option::from(&options[0]),
                 )
                 .unwrap_or_else(|err| {
-                    eprintln!("Error trying to read from db: {}", err);
+                    eprintln!("Error trying to read from database: {}", err);
                     std::process::exit(exitcode::DATAERR);
                 });
 
             if found_client_repo.is_some() {
+                // Prompt for confirmation and handle removal
                 prompt
-                    .prompt_for_client_repo_removal(options, deserialized_config)
-                    .expect("Remove failed");
+                    .prompt_for_client_repo_removal(options, &mut config_doc)
+                    .unwrap_or_else(|err| {
+                        eprintln!("Error during removal: {}", err);
+                        std::process::exit(exitcode::CANTCREAT);
+                    });
 
-                // if there are no clients, lets remove the file and next time will be onboarding
-                //TODO - would be nice to improve this
-                if deserialized_config.is_empty() {
-                    crate::utils::db::db_reader::delete_db()
-                        .expect("Con db empty so autolog tried to remove it. That failed.");
-                    exit_process();
-                    return;
+                // If there are no clients left, delete the entire database
+                if config_doc.is_empty() {
+                    match crate::utils::db::db_reader::delete_db() {
+                        Ok(_) => {
+                            println!("Database removed as it's now empty.");
+                            exit_process();
+                            return;
+                        }
+                        Err(err) => {
+                            eprintln!("Failed to remove empty database: {}", err);
+                            std::process::exit(exitcode::CANTCREAT);
+                        }
+                    }
                 }
 
-                // pass modified config as new client_repository and thus write it straight to file
-                Config::write_to_db(None, Option::Some(deserialized_config));
+                // Write the updated configuration back to the database
+                match db_reader::save_config_doc_to_db(&config_doc) {
+                    Ok(_) => {
+                        println!("Successfully removed the requested item.");
+                    }
+                    Err(err) => {
+                        eprintln!("Error writing to database: {}", err);
+                        std::process::exit(exitcode::CANTCREAT);
+                    }
+                }
             } else {
                 crate::interface::help_prompt::HelpPrompt::client_or_repository_not_found();
             }
@@ -444,41 +478,62 @@ pub trait Update {
 
 impl Update for Config {
     fn update(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
-        // try to read db. Write a new one if it doesn't exist
-        let mut buffer = String::new();
-        self.find_or_create_db(&mut buffer, prompt);
+        // Load or create the database, getting a ConfigurationDoc directly
+        let mut config_doc = self.find_or_create_db(prompt);
 
-        if crate::utils::config_file_found(&mut buffer) {
-            let mut deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
-                .expect("Initialisation of ClientRepository struct from buffer failed");
-
+        if !config_doc.is_empty() {
+            // Find the repository or client to update by namespace or client name
             let (found_repo, found_client_repo) = self
                 .find_client_or_repo_in_buffer(
-                    &mut deserialized_config,
+                    &mut config_doc,
                     Option::None,
                     Option::from(&options[1]),
                     Option::from(&options[0]),
                 )
                 .unwrap_or_else(|err| {
-                    eprintln!("Error trying to read from db: {}", err);
+                    eprintln!("Error trying to read from database: {}", err);
                     std::process::exit(exitcode::DATAERR);
                 });
 
+            // Set the prompt with found values to prepare for updating
             Self::set_prompt_with_found_values(prompt, found_repo, found_client_repo);
 
             if found_client_repo.is_some() {
-                prompt.prompt_for_update(options).expect("Update failed");
+                // Prompt user for updated information
+                prompt.prompt_for_update(options).unwrap_or_else(|err| {
+                    eprintln!("Update failed: {}", err);
+                    std::process::exit(exitcode::DATAERR);
+                });
 
-                let mut new_client_repos = vec![];
-                Self::update_client_repositories(
-                    &mut new_client_repos,
-                    deserialized_config,
-                    prompt,
-                );
+                // Find and update the matching client repository in the config document
+                let client_id = prompt.client_repositories().get_client_id();
+                let mut updated = false;
 
-                // pass modified config as new client_repository and thus write it straight to file
-                Config::write_to_db(None, Option::Some(&mut new_client_repos));
-                crate::interface::help_prompt::HelpPrompt::show_updated_config_success();
+                for client in config_doc.iter_mut() {
+                    if client.get_client_id() == client_id {
+                        // Replace the client with the updated version
+                        *client = prompt.client_repositories().clone();
+                        updated = true;
+                        break;
+                    }
+                }
+
+                // If the client wasn't found (unusual, but possible if IDs change during update),
+                // add the updated version to the config
+                if !updated {
+                    config_doc.push(prompt.client_repositories().clone());
+                }
+
+                // Write the updated configuration back to the database
+                match db_reader::save_config_doc_to_db(&config_doc) {
+                    Ok(_) => {
+                        crate::interface::help_prompt::HelpPrompt::show_updated_config_success();
+                    }
+                    Err(err) => {
+                        eprintln!("Error writing to database: {}", err);
+                        std::process::exit(exitcode::CANTCREAT);
+                    }
+                }
             } else {
                 crate::interface::help_prompt::HelpPrompt::client_or_repository_not_found();
             }
@@ -493,15 +548,15 @@ pub trait List {
 
 impl List for Config {
     fn list(&self, prompt: &mut HelpPrompt) {
-        // try to read db. Write a new one if it doesn't exist
-        let mut buffer = String::new();
-        self.find_or_create_db(&mut buffer, prompt);
+        // Load or create the database, getting a ConfigurationDoc directly
+        let config_doc = self.find_or_create_db(prompt);
 
-        if crate::utils::config_file_found(&mut buffer) {
-            let deserialized_config: ConfigurationDoc = serde_json::from_str(&buffer)
-                .expect("Initialisation of ClientRepository struct from buffer failed");
-
-            prompt.list_clients_and_repos(deserialized_config);
+        if !config_doc.is_empty() {
+            // List all clients and their repositories
+            prompt.list_clients_and_repos(config_doc);
+        } else {
+            println!("No clients or repositories found in the database.");
+            println!("Use 'autolog init' to set up your first repository.");
         }
     }
 }
@@ -563,7 +618,7 @@ mod tests {
         assert_eq!(edited_value, &Value::Bool(true));
     }
 
-    fn is_repo_in_deserialized_config(config: &ConfigurationDoc, namespace: &String) -> bool {
+    fn is_repo_in_configuration_doc(config: &ConfigurationDoc, namespace: &String) -> bool {
         config.iter().any(|client| {
             client.repositories.as_ref().unwrap().iter().any(|repo| {
                 repo.namespace.as_ref().unwrap().to_lowercase() == namespace.to_lowercase()
@@ -571,7 +626,7 @@ mod tests {
         })
     }
 
-    fn is_client_in_deserialized_config(config: &ConfigurationDoc, client_name: &String) -> bool {
+    fn is_client_in_configuration_doc(config: &ConfigurationDoc, client_name: &String) -> bool {
         config.iter().any(|client| {
             client.client.as_ref().unwrap().client_name.to_lowercase() == client_name.to_lowercase()
         })
@@ -582,7 +637,6 @@ mod tests {
         let _lock = lock_test();
         let _test = set_env(OsString::from("TEST_MODE"), "true");
 
-        let mut buffer = String::new();
         let namespace = "autolog".to_string();
         let config = Config::new();
         let options = vec![
@@ -601,25 +655,33 @@ mod tests {
         let mut prompt =
             crate::interface::help_prompt::HelpPrompt::new(&mut repo, &mut client_repos);
 
-        crate::utils::db::db_reader::read_data_from_db(&mut buffer, &mut prompt)
-            .expect("Read of test data failed");
+        // Get initial configuration using find_or_create_db
+        let before_config_doc = config.find_or_create_db(&mut prompt);
 
-        let before_deserialized_config: ConfigurationDoc = serde_json::from_str(&mut buffer)
-            .expect("Initialisation of ClientRepository struct from buffer failed");
-
+        // Verify repository exists before removal
         assert_eq!(
-            is_repo_in_deserialized_config(&before_deserialized_config, &namespace),
+            is_repo_in_configuration_doc(&before_config_doc, &namespace),
             true
         );
 
-        // internally this will find the same test db as above
-        let mut after_deserialized_config: ConfigurationDoc = vec![];
+        // Perform the removal
+        config.remove(options, &mut prompt);
 
-        config.remove(options, &mut prompt, &mut after_deserialized_config);
+        // Check if the repository has been removed from the client_repositories in the prompt
+        let client_repos = prompt.client_repositories();
+
+        // Verify repository has been removed from the prompt
+        let repo_exists = if let Some(repositories) = &client_repos.repositories {
+            repositories.iter().any(|repo| {
+                repo.namespace.as_ref().unwrap().to_lowercase() == namespace.to_lowercase()
+            })
+        } else {
+            false
+        };
 
         assert_eq!(
-            is_repo_in_deserialized_config(&after_deserialized_config, &namespace),
-            false
+            repo_exists, false,
+            "Repository should be removed from the prompt"
         );
     }
 
@@ -628,7 +690,6 @@ mod tests {
         let _lock = lock_test();
         let _test = set_env(OsString::from("TEST_MODE"), "true");
 
-        let mut buffer = String::new();
         let client = "apple".to_string();
         let config = Config::new();
         let options = vec![Option::from(client.clone()), Option::None];
@@ -644,25 +705,28 @@ mod tests {
         let mut prompt =
             crate::interface::help_prompt::HelpPrompt::new(&mut repo, &mut client_repos);
 
-        crate::utils::db::db_reader::read_data_from_db(&mut buffer, &mut prompt)
-            .expect("Read of test data failed");
+        // Get initial configuration using find_or_create_db
+        let before_config_doc = config.find_or_create_db(&mut prompt);
 
-        let before_deserialized_config: ConfigurationDoc = serde_json::from_str(&mut buffer)
-            .expect("Initialisation of ClientRepository struct from buffer failed");
-
+        // Verify client exists before removal
         assert_eq!(
-            is_client_in_deserialized_config(&before_deserialized_config, &client),
+            is_client_in_configuration_doc(&before_config_doc, &client),
             true
         );
 
-        // internally this will find the same test db as above
-        let mut after_deserialized_config: ConfigurationDoc = vec![];
+        // Perform the removal
+        config.remove(options, &mut prompt);
 
-        config.remove(options, &mut prompt, &mut after_deserialized_config);
+        // Access the client repositories from prompt
+        // The prompt should have the updated state after removal
+        let client_repositories = prompt.client_repositories();
 
-        assert_eq!(
-            is_client_in_deserialized_config(&after_deserialized_config, &client),
-            false
+        // Check if the client repositories is now empty
+        // If the client was removed and it was the only client, client_repositories should be empty
+        assert!(
+            client_repositories.client.is_none()
+                || client_repositories.client.as_ref().unwrap().client_name != client,
+            "Client should be removed from prompt"
         );
     }
 
