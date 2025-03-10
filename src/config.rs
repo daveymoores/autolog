@@ -178,7 +178,6 @@ impl Config {
 
         // Create a new configuration with the user data
         Config::fetch_interaction_data(&mut client_repositories, &mut repository);
-
         // Save to database
         let new_config = vec![client_repositories];
         match db_reader::save_config_doc_to_db(&new_config) {
@@ -221,7 +220,7 @@ impl Init for Config {
             if found_repo.is_some() & found_client_repo.is_some() {
                 crate::interface::help_prompt::HelpPrompt::repo_already_initialised();
             } else {
-                // Onboard new repository
+                // Onboard new repository and allow user to choose a client or create a new one
                 prompt
                     .prompt_for_client_then_onboard(&mut config_doc)
                     .unwrap_or_else(|err| {
