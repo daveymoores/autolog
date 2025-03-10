@@ -234,12 +234,22 @@ impl Init for Config {
                 // Fetch interaction data
                 Config::fetch_interaction_data(&mut client_repositories, &mut repository);
 
+                // check if this is a new client
+                let client_id = client_repositories.get_client_id();
+                let mut client_exists = false;
+
                 // Update the client repository in the config document
                 for client in config_doc.iter_mut() {
-                    if client.get_client_id() == client_repositories.get_client_id() {
+                    if client.get_client_id() == client_id {
                         *client = client_repositories.clone();
+                        client_exists = true;
                         break;
                     }
+                }
+
+                // If this is a new client, add it to config_doc
+                if !client_exists {
+                    config_doc.push(client_repositories.clone());
                 }
 
                 // Write updated config back to database
