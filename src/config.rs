@@ -2,6 +2,7 @@ use crate::data::client_repositories::ClientRepositories;
 use crate::data::repository::Repository;
 use crate::interface::help_prompt::ConfigurationDoc;
 use crate::interface::help_prompt::HelpPrompt;
+use crate::interface::help_prompt::Onboarding;
 use crate::utils::db::db_reader;
 use crate::utils::exit_process;
 use crate::utils::link::link_builder;
@@ -124,18 +125,24 @@ impl Config {
             // otherwise check whether any clients contain the namespace
             // and return the repository and the client
             for client in deserialized_config.iter() {
-                option = match client
-                    .repositories
-                    .as_ref()
-                    .unwrap()
-                    .iter()
-                    .find(|repository| {
-                        repository.namespace.as_ref().unwrap().to_lowercase()
-                            == namespace.as_ref().unwrap().to_lowercase()
-                    }) {
-                    Some(repository) => (Option::from(repository), Option::from(client)),
-                    None => option,
-                };
+                // Skip clients without repositories
+                if let Some(repositories) = client.repositories.as_ref() {
+                    if !repositories.is_empty() {
+                        option = match repositories.iter().find(|repository| {
+                            // Handle repositories without a namespace
+                            if let Some(repo_namespace) = &repository.namespace {
+                                repo_namespace.to_lowercase()
+                                    == namespace.as_ref().unwrap().to_lowercase()
+                            } else {
+                                false // Skip repositories without a namespace
+                            }
+                        }) {
+                            Some(repository) => (Option::from(repository), Option::from(client)),
+                            None => option,
+                        };
+                    }
+                }
+                // If client has no repositories, keep the current option value unchanged
             }
         }
 
@@ -144,34 +151,46 @@ impl Config {
 
     fn find_or_create_db(self, prompt: &mut HelpPrompt) -> ConfigurationDoc {
         // Try to load existing config from the database
-        let config_doc = match db_reader::load_config_doc_from_db() {
-            Ok(doc) => doc,
-            Err(_err) => {
-                // If the database doesn't exist or is empty, we'll create a new one
-                eprintln!("Creating new autolog database");
-
-                let mut repository = prompt.repository().clone();
-                let mut client_repositories = prompt.client_repositories().clone();
-
-                // Create a new configuration with the user data
-                Config::fetch_interaction_data(&mut client_repositories, &mut repository);
-
-                // Save to database
-                let new_config = vec![client_repositories];
-                match db_reader::save_config_doc_to_db(&new_config) {
-                    Ok(_) => {
-                        crate::interface::help_prompt::HelpPrompt::show_write_new_config_success();
-                        new_config
-                    }
-                    Err(err) => {
-                        eprintln!("Error initialising autolog: {}", err);
-                        std::process::exit(exitcode::CANTCREAT);
-                    }
-                }
+        match db_reader::load_config_doc_from_db() {
+            Ok(doc) if !doc.is_empty() => {
+                // Database exists and has data
+                doc
             }
-        };
+            Ok(_) | Err(_) => {
+                // Either database is empty or doesn't exist
+                // In both cases, we need to create new configuration
+                eprintln!("Creating new autolog configuration");
 
-        config_doc
+                // Run onboarding
+                self.create_new_configuration(prompt)
+            }
+        }
+    }
+
+    fn create_new_configuration(&self, prompt: &mut HelpPrompt) -> ConfigurationDoc {
+        prompt.onboarding(true).unwrap_or_else(|err| {
+            eprintln!("Error during onboarding: {}", err);
+            std::process::exit(exitcode::CANTCREAT);
+        });
+
+        let mut repository = prompt.repository().clone();
+        let mut client_repositories = prompt.client_repositories().clone();
+
+        // Create a new configuration with the user data
+        Config::fetch_interaction_data(&mut client_repositories, &mut repository);
+
+        // Save to database
+        let new_config = vec![client_repositories];
+        match db_reader::save_config_doc_to_db(&new_config) {
+            Ok(_) => {
+                crate::interface::help_prompt::HelpPrompt::show_write_new_config_success();
+                new_config
+            }
+            Err(err) => {
+                eprintln!("Error initialising autolog: {}", err);
+                std::process::exit(exitcode::CANTCREAT);
+            }
+        }
     }
 }
 
