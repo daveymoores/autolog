@@ -19,9 +19,21 @@ pub fn confirm() -> Result<bool, Box<dyn Error>> {
 }
 
 pub fn is_test_mode() -> bool {
-    dotenv().ok();
-    let test_mode = env::var("TEST_MODE").unwrap();
-    test_mode.parse::<bool>().unwrap()
+    // Load environment variables from .env file if available
+    let _ = dotenv();
+
+    // Check for TEST_MODE environment variable first
+    match env::var("TEST_MODE") {
+        Ok(value) => {
+            // Try to parse as boolean; any of "1", "true", "True", "TRUE" will work
+            value.parse::<bool>().unwrap_or_else(|_| {
+                // If not a valid boolean, check for "1"
+                value == "1"
+            })
+        }
+        // If TEST_MODE isn't set in environment, check if we're in a test context
+        Err(_) => cfg!(test),
+    }
 }
 
 pub fn exit_process() {
