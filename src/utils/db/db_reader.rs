@@ -4,11 +4,16 @@ use crate::interface::help_prompt::ConfigurationDoc;
 use crate::utils::is_test_mode;
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientRepository {
+    pub client_id: String,
+}
 
 const DB_FILE_NAME: &str = "autolog.db";
 
@@ -31,6 +36,9 @@ pub fn save_config_doc_to_db(
 
     // Try to write each client repository to the database
     let result = (|| {
+        // First, remove any client repositories that are no longer in the config_doc
+        remove_deleted_client_repositories(&tx, config_doc)?;
+
         for client_repo in config_doc.iter() {
             save_client_repository(&tx, client_repo)?;
         }
@@ -49,12 +57,118 @@ pub fn save_config_doc_to_db(
     Ok(())
 }
 
+fn remove_deleted_client_repositories(
+    tx: &Transaction,
+    config_doc: &ConfigurationDoc,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Fetch all existing clients from the database
+    let existing_client_ids = fetch_all_clients(tx)?;
+    println!("existing client ids {:?}", existing_client_ids);
+
+    // Iterate over the existing client_ids and remove those not in config_doc
+    for client_id in existing_client_ids {
+        if !config_doc.iter().any(|client_repo| {
+            client_repo
+                .client
+                .as_ref()
+                .map_or(false, |client| client.id == client_id)
+        }) {
+            delete_client_repositories_by_client_id(tx, &client_id)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn fetch_all_clients(tx: &Transaction) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut stmt = tx.prepare("SELECT id FROM clients")?;
+    let mut client_id_vec: Vec<String> = Vec::new();
+
+    let client_repo_iter = stmt.query_map(params![], |row| row.get(0))?;
+
+    for client_repo in client_repo_iter {
+        client_id_vec.push(client_repo?);
+    }
+
+    Ok(client_id_vec)
+}
+
+fn delete_client_repositories_by_client_id(
+    tx: &Transaction,
+    client_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // First fetch all repositories for this client
+    let mut stmt = tx.prepare("SELECT id FROM repositories WHERE client_id = ?")?;
+    let repo_ids: Vec<String> = stmt
+        .query_map(params![client_id], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+
+    // Delete data for each repository
+    for repo_id in &repo_ids {
+        // Delete timesheet entries
+        tx.execute(
+            "DELETE FROM timesheet_entries WHERE repository_id = ?",
+            params![repo_id],
+        )?;
+
+        // Delete git log days
+        tx.execute(
+            "DELETE FROM git_log_days WHERE repository_id = ?",
+            params![repo_id],
+        )?;
+
+        // Delete git log months
+        tx.execute(
+            "DELETE FROM git_log_months WHERE repository_id = ?",
+            params![repo_id],
+        )?;
+
+        // Delete git log years
+        tx.execute(
+            "DELETE FROM git_log_years WHERE repository_id = ?",
+            params![repo_id],
+        )?;
+    }
+
+    // Delete repositories
+    tx.execute(
+        "DELETE FROM repositories WHERE client_id = ?",
+        params![client_id],
+    )?;
+
+    // Delete approvers (need to find client_repository_ids first)
+    let mut stmt = tx.prepare("SELECT id FROM client_repositories WHERE client_id = ?")?;
+    let client_repo_ids: Vec<i64> = stmt
+        .query_map(params![client_id], |row| row.get(0))?
+        .collect::<Result<Vec<i64>, _>>()?;
+
+    for client_repo_id in client_repo_ids {
+        tx.execute(
+            "DELETE FROM approvers WHERE client_repository_id = ?",
+            params![client_repo_id],
+        )?;
+    }
+
+    // Delete from client_repositories
+    tx.execute(
+        "DELETE FROM client_repositories WHERE client_id = ?",
+        params![client_id],
+    )?;
+
+    // Finally delete the client itself
+    tx.execute("DELETE FROM clients WHERE id = ?", params![client_id])?;
+
+    println!("Deleted client {} and all associated data", client_id);
+
+    Ok(())
+}
+
 /// Get the platform-specific path for the database
 pub fn get_db_path() -> PathBuf {
     if is_test_mode() {
         PathBuf::from("./testing-utils").join(DB_FILE_NAME)
     } else {
-        let proj_dirs = ProjectDirs::from("dev", "autolog", "autolog-cli")
+        let proj_dirs = ProjectDirs::from("dev", "autolog", "cli")
             .expect("Failed to determine app data directory");
 
         let data_dir = proj_dirs.data_dir();
@@ -877,4 +991,269 @@ pub fn get_canonical_path(path: &str) -> String {
         std::process::exit(exitcode::CANTCREAT);
     });
     path.to_str().map(|x| x.to_string()).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::client_repositories::{Approver, Client, ClientRepositories, User};
+    use crate::data::repository::Repository;
+    use rusqlite::Connection;
+    use std::collections::{HashMap, HashSet};
+    use std::env;
+    use tempfile::tempdir;
+
+    // Helper function to set up a test database
+    fn setup_test_db() -> Connection {
+        // Use in-memory database for tests
+        let conn = Connection::open(":memory:").unwrap();
+        init_schema(&conn).unwrap();
+        conn
+    }
+
+    // Helper to create a basic client repository
+    fn create_test_client(id: &str, name: &str) -> ClientRepositories {
+        let client = Client {
+            id: id.to_string(),
+            client_name: name.to_string(),
+            client_address: "123 Test St".to_string(),
+            client_contact_person: "Test Contact".to_string(),
+        };
+
+        let user = User {
+            id: format!("user-{}", id),
+            name: "Test User".to_string(),
+            email: "test@example.com".to_string(),
+            is_alias: false,
+            thumbnail: None,
+        };
+
+        let approver = Approver {
+            approvers_name: Some("Approver Name".to_string()),
+            approvers_email: Some("approver@example.com".to_string()),
+        };
+
+        let repository = Repository {
+            id: Some(format!("repo-{}", id)),
+            namespace: Some("test-namespace".to_string()),
+            namespace_alias: None,
+            repo_path: Some("/test/path".to_string()),
+            git_path: Some("/test/git/path".to_string()),
+            user_id: Some(user.id.clone()),
+            name: Some("Test Repo".to_string()),
+            email: Some("repo@example.com".to_string()),
+            client_id: Some(id.to_string()),
+            client_name: Some(name.to_string()),
+            client_contact_person: Some("Test Contact".to_string()),
+            client_address: Some("123 Test St".to_string()),
+            project_number: Some("PROJECT-123".to_string()),
+            service: Some("GitHub".to_string()),
+            service_username: Some("testuser".to_string()),
+            git_log_dates: Some(create_test_git_log_dates()),
+            timesheet: Some(create_test_timesheet()),
+        };
+
+        ClientRepositories {
+            client: Some(client),
+            user: Some(user),
+            repositories: Some(vec![repository]),
+            requires_approval: Some(true),
+            approver: Some(approver),
+        }
+    }
+
+    // Helper to create test git log dates
+    fn create_test_git_log_dates() -> HashMap<i32, HashMap<u32, HashSet<u32>>> {
+        let mut git_log_dates = HashMap::new();
+        let mut months = HashMap::new();
+        let mut days = HashSet::new();
+        days.insert(15);
+        days.insert(16);
+        months.insert(5, days);
+        git_log_dates.insert(2023, months);
+        git_log_dates
+    }
+
+    // Helper to create test timesheet
+    fn create_test_timesheet()
+    -> HashMap<String, HashMap<String, Vec<serde_json::Map<String, serde_json::Value>>>> {
+        let mut timesheet = HashMap::new();
+        let mut months = HashMap::new();
+        let mut days = Vec::new();
+
+        // Fill with empty days
+        for _ in 0..30 {
+            days.push(serde_json::Map::new());
+        }
+
+        // Add data for day 15
+        let mut day_data = serde_json::Map::new();
+        day_data.insert(
+            "hours".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(8)),
+        );
+        day_data.insert("weekend".to_string(), serde_json::Value::Bool(false));
+        day_data.insert("user_edited".to_string(), serde_json::Value::Bool(true));
+        days[14] = day_data;
+
+        months.insert("05".to_string(), days);
+        timesheet.insert("2023".to_string(), months);
+        timesheet
+    }
+
+    // Helper to count entities in database
+    fn count_entities(conn: &Connection, table: &str) -> i64 {
+        conn.query_row(&format!("SELECT COUNT(*) FROM {}", table), [], |row| {
+            row.get(0)
+        })
+        .unwrap_or(0)
+    }
+
+    #[test]
+    fn test_save_and_delete_single_client() {
+        // Force test mode
+        unsafe { env::set_var("TEST_MODE", "1") };
+
+        let mut conn = setup_test_db();
+        let tx = conn.transaction().unwrap();
+
+        // Create configuration with one client
+        let client_repo = create_test_client("client1", "Client One");
+        let config_doc = vec![client_repo];
+
+        // Save the client
+        save_client_repository(&tx, &config_doc[0]).unwrap();
+        tx.commit().unwrap();
+
+        // Verify data was saved
+        assert_eq!(count_entities(&conn, "clients"), 1);
+        assert_eq!(count_entities(&conn, "repositories"), 1);
+        assert_eq!(count_entities(&conn, "users"), 1);
+        assert_eq!(count_entities(&conn, "client_repositories"), 1);
+        assert_eq!(count_entities(&conn, "approvers"), 1);
+        assert_eq!(count_entities(&conn, "git_log_years"), 1);
+        assert_eq!(count_entities(&conn, "git_log_months"), 1);
+        assert_eq!(count_entities(&conn, "git_log_days"), 2); // We added 2 days
+        assert_eq!(count_entities(&conn, "timesheet_entries"), 30);
+
+        // Now delete the client
+        let tx = conn.transaction().unwrap();
+        delete_client_repositories_by_client_id(&tx, "client1").unwrap();
+        tx.commit().unwrap();
+
+        // Verify all data was deleted
+        assert_eq!(count_entities(&conn, "clients"), 0);
+        assert_eq!(count_entities(&conn, "repositories"), 0);
+        assert_eq!(count_entities(&conn, "client_repositories"), 0);
+        assert_eq!(count_entities(&conn, "approvers"), 0);
+        assert_eq!(count_entities(&conn, "git_log_years"), 0);
+        assert_eq!(count_entities(&conn, "git_log_months"), 0);
+        assert_eq!(count_entities(&conn, "git_log_days"), 0);
+        assert_eq!(count_entities(&conn, "timesheet_entries"), 0);
+
+        // User should still exist as it's not directly tied to client deletion
+        assert_eq!(count_entities(&conn, "users"), 1);
+    }
+
+    #[test]
+    fn test_save_and_remove_deleted_clients() {
+        // Force test mode
+        unsafe { env::set_var("TEST_MODE", "1") };
+
+        let mut conn = setup_test_db();
+
+        // Create configuration with two clients
+        let client_repo1 = create_test_client("client1", "Client One");
+        let client_repo2 = create_test_client("client2", "Client Two");
+        let config_doc = vec![client_repo1, client_repo2];
+
+        // Save both clients
+        let tx = conn.transaction().unwrap();
+        for client_repo in &config_doc {
+            save_client_repository(&tx, client_repo).unwrap();
+        }
+        tx.commit().unwrap();
+
+        // Verify both clients were saved
+        assert_eq!(count_entities(&conn, "clients"), 2);
+        assert_eq!(count_entities(&conn, "repositories"), 2);
+
+        // Now create a new config with only the first client
+        let updated_config_doc = vec![config_doc[0].clone()];
+
+        // Use the remove_deleted_client_repositories function
+        let tx = conn.transaction().unwrap();
+        remove_deleted_client_repositories(&tx, &updated_config_doc).unwrap();
+        tx.commit().unwrap();
+
+        // Verify only one client remains
+        assert_eq!(count_entities(&conn, "clients"), 1);
+        assert_eq!(count_entities(&conn, "repositories"), 1);
+
+        // Verify the remaining client is client1
+        let client_id: String = conn
+            .query_row("SELECT id FROM clients", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(client_id, "client1");
+    }
+
+    #[test]
+    fn test_full_save_config_doc_with_removal() {
+        // Force test mode
+        unsafe { env::set_var("TEST_MODE", "1") };
+
+        // Set a custom DB path for testing
+        let temp_dir = tempdir().unwrap();
+        let test_db_path = temp_dir.path().join("test.db");
+
+        // Override the get_db_path function for this test
+        // Note: This requires modifying get_db_path to be mockable or using a crate like mockall
+        // For this example, we'll use a simple approach to isolate our tests
+
+        // Create and populate the database
+        let mut conn = Connection::open(&test_db_path).unwrap();
+        init_schema(&conn).unwrap();
+
+        // Create two clients
+        let client_repo1 = create_test_client("client1", "Client One");
+        let client_repo2 = create_test_client("client2", "Client Two");
+        let config_doc = vec![client_repo1.clone(), client_repo2.clone()];
+
+        // Save both clients manually to the test database
+        {
+            let tx = conn.transaction().unwrap();
+            for client_repo in &config_doc {
+                save_client_repository(&tx, client_repo).unwrap();
+            }
+            tx.commit().unwrap();
+        }
+
+        // Verify both clients were saved
+        assert_eq!(count_entities(&conn, "clients"), 2);
+        assert_eq!(count_entities(&conn, "repositories"), 2);
+
+        // Now create an updated config that only includes client1
+        let updated_config_doc = vec![client_repo1];
+
+        // Need to manually execute the save_config_doc_to_db logic since we're using a custom DB
+        {
+            let tx = conn.transaction().unwrap();
+            remove_deleted_client_repositories(&tx, &updated_config_doc).unwrap();
+
+            for client_repo in updated_config_doc.iter() {
+                save_client_repository(&tx, client_repo).unwrap();
+            }
+            tx.commit().unwrap();
+        }
+
+        // Verify only one client remains
+        assert_eq!(count_entities(&conn, "clients"), 1);
+        assert_eq!(count_entities(&conn, "repositories"), 1);
+
+        // Check that it's client1
+        let client_id: String = conn
+            .query_row("SELECT id FROM clients", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(client_id, "client1");
+    }
 }
