@@ -161,6 +161,7 @@ pub async fn build_unique_uri(
         .collection(mongodb_collection);
 
     let random_path: String = db.generate_random_path(&collection).await?;
+    client_repositories.fetch_user_thumbnail();
     let document = build_document(
         Utc::now(),
         &random_path,

@@ -1,6 +1,7 @@
 use crate::config::New;
 use crate::data::repository::{GitLogDates, Repository};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::process;
 use std::process::Command;
 
@@ -23,7 +24,7 @@ pub struct Client {
     pub client_contact_person: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct User {
     pub id: String,
     pub name: String,
@@ -50,6 +51,20 @@ impl New for ClientRepositories {
 }
 
 impl ClientRepositories {
+    pub fn fetch_user_thumbnail(&mut self) -> &mut Self {
+        if let Some(user) = self.user.as_mut() {
+            if user.thumbnail.is_none() && !user.email.is_empty() {
+                let mut hasher = Sha256::new();
+                hasher.update(user.email.trim().to_lowercase().as_bytes());
+                let hash_result = hasher.finalize();
+                let hash_str = format!("{:x}", hash_result);
+
+                user.thumbnail = Some(format!("https://gravatar.com/avatar/{}?s=200", hash_str));
+            }
+        }
+        self
+    }
+
     pub fn set_values(&mut self, repository: &mut Repository) -> &mut Self {
         self.client = Option::from(Client {
             id: repository.client_id.clone().unwrap_or("None".to_string()),
@@ -314,11 +329,99 @@ impl ClientRepositories {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::client_repositories::{Client, ClientRepositories, User};
+    use crate::data::client_repositories::{Client, ClientRepositories, New, User};
     use crate::data::repository::Repository;
     use crate::helpers::mocks;
     use nanoid::nanoid;
     use serde_json::json;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn test_fetch_user_thumbnail() {
+        let mut client_repos = ClientRepositories::new();
+        let test_email = "test@example.com";
+
+        let user = User {
+            email: test_email.to_string(),
+            thumbnail: None,
+            ..Default::default()
+        };
+
+        client_repos.user = Some(user);
+        client_repos.fetch_user_thumbnail();
+
+        let expected_thumbnail = {
+            let mut hasher = Sha256::new();
+            hasher.update(test_email.trim().to_lowercase().as_bytes());
+            let hash_result = hasher.finalize();
+            let hash_str = format!("{:x}", hash_result);
+            format!("https://gravatar.com/avatar/{}?s=200", hash_str)
+        };
+
+        assert_eq!(
+            client_repos
+                .user
+                .as_ref()
+                .unwrap()
+                .thumbnail
+                .as_ref()
+                .unwrap(),
+            &expected_thumbnail
+        );
+    }
+
+    #[test]
+    fn test_fetch_user_thumbnail_with_existing_thumbnail() {
+        // Setup: Create a ClientRepositories instance with a user that already has a thumbnail
+        let mut client_repos = ClientRepositories::new();
+        let existing_thumbnail = "https://example.com/existing.jpg".to_string();
+        let user = User {
+            email: "test@example.com".to_string(),
+            thumbnail: Some(existing_thumbnail.clone()),
+            ..Default::default()
+        };
+        client_repos.user = Some(user);
+        client_repos.fetch_user_thumbnail();
+        assert_eq!(
+            client_repos
+                .user
+                .as_ref()
+                .unwrap()
+                .thumbnail
+                .as_ref()
+                .unwrap(),
+            &existing_thumbnail
+        );
+    }
+
+    #[test]
+    fn test_fetch_user_thumbnail_with_empty_email() {
+        // Setup: Create a ClientRepositories instance with a user that has an empty email
+        let mut client_repos = ClientRepositories::new();
+
+        let user = User {
+            email: "".to_string(),
+            thumbnail: None,
+            ..Default::default()
+        };
+
+        client_repos.user = Some(user);
+        client_repos.fetch_user_thumbnail();
+        assert!(client_repos.user.as_ref().unwrap().thumbnail.is_none());
+    }
+
+    #[test]
+    fn test_fetch_user_thumbnail_with_no_user() {
+        // Setup: Create a ClientRepositories instance with no user
+        let mut repos = ClientRepositories::new();
+        repos.user = None;
+
+        // Act: Call the method
+        repos.fetch_user_thumbnail();
+
+        // Assert: No error should occur, and user should still be None
+        assert!(repos.user.is_none());
+    }
 
     #[test]
     fn it_set_requires_approval() {
