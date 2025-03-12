@@ -4,11 +4,16 @@ use crate::interface::help_prompt::ConfigurationDoc;
 use crate::utils::is_test_mode;
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientRepository {
+    pub client_id: String,
+}
 
 const DB_FILE_NAME: &str = "autolog.db";
 
@@ -31,6 +36,9 @@ pub fn save_config_doc_to_db(
 
     // Try to write each client repository to the database
     let result = (|| {
+        // First, remove any client repositories that are no longer in the config_doc
+        remove_deleted_client_repositories(&tx, config_doc)?;
+
         for client_repo in config_doc.iter() {
             save_client_repository(&tx, client_repo)?;
         }
@@ -49,12 +57,118 @@ pub fn save_config_doc_to_db(
     Ok(())
 }
 
+fn remove_deleted_client_repositories(
+    tx: &Transaction,
+    config_doc: &ConfigurationDoc,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Fetch all existing clients from the database
+    let existing_client_ids = fetch_all_clients(tx)?;
+    println!("existing client ids {:?}", existing_client_ids);
+
+    // Iterate over the existing client_ids and remove those not in config_doc
+    for client_id in existing_client_ids {
+        if !config_doc.iter().any(|client_repo| {
+            client_repo
+                .client
+                .as_ref()
+                .map_or(false, |client| client.id == client_id)
+        }) {
+            delete_client_repositories_by_client_id(tx, &client_id)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn fetch_all_clients(tx: &Transaction) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut stmt = tx.prepare("SELECT id FROM clients")?;
+    let mut client_id_vec: Vec<String> = Vec::new();
+
+    let client_repo_iter = stmt.query_map(params![], |row| row.get(0))?;
+
+    for client_repo in client_repo_iter {
+        client_id_vec.push(client_repo?);
+    }
+
+    Ok(client_id_vec)
+}
+
+fn delete_client_repositories_by_client_id(
+    tx: &Transaction,
+    client_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // First fetch all repositories for this client
+    let mut stmt = tx.prepare("SELECT id FROM repositories WHERE client_id = ?")?;
+    let repo_ids: Vec<String> = stmt
+        .query_map(params![client_id], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+
+    // Delete data for each repository
+    for repo_id in &repo_ids {
+        // Delete timesheet entries
+        tx.execute(
+            "DELETE FROM timesheet_entries WHERE repository_id = ?",
+            params![repo_id],
+        )?;
+
+        // Delete git log days
+        tx.execute(
+            "DELETE FROM git_log_days WHERE repository_id = ?",
+            params![repo_id],
+        )?;
+
+        // Delete git log months
+        tx.execute(
+            "DELETE FROM git_log_months WHERE repository_id = ?",
+            params![repo_id],
+        )?;
+
+        // Delete git log years
+        tx.execute(
+            "DELETE FROM git_log_years WHERE repository_id = ?",
+            params![repo_id],
+        )?;
+    }
+
+    // Delete repositories
+    tx.execute(
+        "DELETE FROM repositories WHERE client_id = ?",
+        params![client_id],
+    )?;
+
+    // Delete approvers (need to find client_repository_ids first)
+    let mut stmt = tx.prepare("SELECT id FROM client_repositories WHERE client_id = ?")?;
+    let client_repo_ids: Vec<i64> = stmt
+        .query_map(params![client_id], |row| row.get(0))?
+        .collect::<Result<Vec<i64>, _>>()?;
+
+    for client_repo_id in client_repo_ids {
+        tx.execute(
+            "DELETE FROM approvers WHERE client_repository_id = ?",
+            params![client_repo_id],
+        )?;
+    }
+
+    // Delete from client_repositories
+    tx.execute(
+        "DELETE FROM client_repositories WHERE client_id = ?",
+        params![client_id],
+    )?;
+
+    // Finally delete the client itself
+    tx.execute("DELETE FROM clients WHERE id = ?", params![client_id])?;
+
+    println!("Deleted client {} and all associated data", client_id);
+
+    Ok(())
+}
+
 /// Get the platform-specific path for the database
 pub fn get_db_path() -> PathBuf {
     if is_test_mode() {
         PathBuf::from("./testing-utils").join(DB_FILE_NAME)
     } else {
-        let proj_dirs = ProjectDirs::from("dev", "autolog", "autolog-cli")
+        let proj_dirs = ProjectDirs::from("dev", "autolog", "cli")
             .expect("Failed to determine app data directory");
 
         let data_dir = proj_dirs.data_dir();
