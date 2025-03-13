@@ -194,8 +194,103 @@ pub fn get_connection() -> Result<Connection> {
     Ok(conn)
 }
 
+pub fn should_check_for_updates() -> Result<bool, Box<dyn std::error::Error>> {
+    if is_test_mode() {
+        return Ok(false); // Don't check for updates in test mode
+    }
+
+    let conn = get_connection()?;
+
+    // Get the most recent cache entry
+    let result = conn.query_row(
+        "SELECT last_checked, latest_version FROM version_cache
+         ORDER BY last_checked DESC LIMIT 1",
+        [],
+        |row| {
+            let last_checked: String = row.get(0)?;
+            let latest_version: String = row.get(1)?;
+            Ok((last_checked, latest_version))
+        },
+    );
+
+    match result {
+        Ok((last_checked_str, _)) => {
+            // Parse the last_checked timestamp
+            let last_checked = chrono::DateTime::parse_from_rfc3339(&last_checked_str)
+                .map_err(|e| format!("Invalid timestamp format: {}", e))?
+                .with_timezone(&chrono::Utc);
+
+            // Get current time
+            let now = chrono::Utc::now();
+
+            // Check once a day (86400 seconds)
+            Ok((now - last_checked).num_seconds() >= 86400)
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            // No cache entry yet, should check
+            Ok(true)
+        }
+        Err(e) => Err(Box::new(e)),
+    }
+}
+
+/// Update the version cache with the latest version
+pub fn update_version_cache(latest_version: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if is_test_mode() {
+        return Ok(());
+    }
+
+    let conn = get_connection()?;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT INTO version_cache (last_checked, latest_version) VALUES (?, ?)",
+        params![now, latest_version],
+    )?;
+
+    // Keep only the most recent 5 entries to prevent unlimited growth
+    conn.execute(
+        "DELETE FROM version_cache WHERE id NOT IN (
+            SELECT id FROM version_cache ORDER BY last_checked DESC LIMIT 5
+        )",
+        [],
+    )?;
+
+    Ok(())
+}
+
+/// Get the latest version from cache without checking for updates
+pub fn get_cached_version() -> Result<Option<String>, Box<dyn std::error::Error>> {
+    if is_test_mode() {
+        return Ok(None);
+    }
+
+    let conn = get_connection()?;
+
+    match conn.query_row(
+        "SELECT latest_version FROM version_cache
+         ORDER BY last_checked DESC LIMIT 1",
+        [],
+        |row| row.get::<_, String>(0),
+    ) {
+        Ok(version) => Ok(Some(version)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(Box::new(e)),
+    }
+}
+
 /// Initialize the database schema if tables don't exist
 fn init_schema(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS version_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        last_checked TEXT NOT NULL,
+        latest_version TEXT NOT NULL
+        )",
+        [],
+    )
+    .context("Failed to create version_cache table")?;
+
     // Create clients table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS clients (

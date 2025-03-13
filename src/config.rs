@@ -6,6 +6,7 @@ use crate::interface::help_prompt::Onboarding;
 use crate::utils::db::db_reader;
 use crate::utils::exit_process;
 use crate::utils::link::link_builder;
+use semver::Version;
 use std::process;
 
 /// Creates and modifies the  db Config does not directly hold the information
@@ -149,6 +150,111 @@ impl Config {
         Ok(option)
     }
 
+    async fn check_for_homebrew_update(self) -> Result<(), Box<dyn std::error::Error>> {
+        // Get the current version from Cargo.toml
+        let current_version_str = env!("CARGO_PKG_VERSION");
+        let current_version_str = current_version_str.trim_start_matches('v');
+        let current_version = Version::parse(current_version_str)?;
+
+        // Check if we should check for updates based on the cache
+        let should_check = crate::utils::db::db_reader::should_check_for_updates()?;
+
+        if should_check {
+            // Cache is stale or non-existent, do a fresh check from Homebrew
+            let output = tokio::process::Command::new("brew")
+                .args(["info", "--json", "autolog"])
+                .output()
+                .await?;
+
+            if !output.status.success() {
+                return Err(format!(
+                    "Failed to check homebrew: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )
+                .into());
+            }
+
+            // Parse the JSON output from brew
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            let brew_info: Vec<serde_json::Value> = serde_json::from_str(&output_str)?;
+
+            if brew_info.is_empty() {
+                return Err("No homebrew information found for autolog".into());
+            }
+
+            // Extract the latest version
+            if let Some(version_str) = brew_info[0]
+                .get("versions")
+                .and_then(|v| v.get("stable"))
+                .and_then(|v| v.as_str())
+            {
+                // Remove any 'v' prefix if present
+                let version_str = version_str.trim_start_matches('v');
+
+                // Update the cache with the latest version
+                crate::utils::db::db_reader::update_version_cache(version_str)?;
+
+                match Version::parse(version_str) {
+                    Ok(latest_version) => {
+                        // Compare versions semantically
+                        if latest_version > current_version {
+                            println!(
+                                "A new version of autolog is available: {}. You are using {}. Please update using `brew upgrade autolog`.",
+                                version_str, current_version_str
+                            );
+                        }
+                        Ok(())
+                    }
+                    Err(e) => {
+                        // If we can't parse the version, just log it but don't fail
+                        eprintln!("Failed to parse version '{}': {}", version_str, e);
+                        Ok(())
+                    }
+                }
+            } else {
+                Err("Could not find version information in homebrew output".into())
+            }
+        } else {
+            // Use cached version
+            if let Some(cached_version) = crate::utils::db::db_reader::get_cached_version()? {
+                match Version::parse(&cached_version) {
+                    Ok(latest_version) => {
+                        // Compare versions semantically
+                        if latest_version > current_version {
+                            println!(
+                                "A new version of autolog is available: {}. You are using {}. Please update using `brew upgrade autolog`.",
+                                cached_version, current_version_str
+                            );
+                        }
+                        Ok(())
+                    }
+                    Err(_) => {
+                        // Just silently ignore parsing errors for cached versions
+                        Ok(())
+                    }
+                }
+            } else {
+                // No cache available, shouldn't happen but handle gracefully
+                Ok(())
+            }
+        }
+    }
+
+    async fn check_for_update(self) -> Result<(), Box<dyn std::error::Error>> {
+        match self.check_for_homebrew_update().await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                // Fall back to displaying the current version if homebrew check fails
+                eprintln!("Failed to check for updates: {}", e);
+                println!(
+                    "You are using autolog version {}",
+                    env!("CARGO_PKG_VERSION")
+                );
+                Ok(())
+            }
+        }
+    }
+
     fn find_or_create_db(self, prompt: &mut HelpPrompt) -> ConfigurationDoc {
         // Try to load existing config from the database
         match db_reader::load_config_doc_from_db() {
@@ -199,7 +305,12 @@ pub trait Init {
 }
 
 impl Init for Config {
-    fn init(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
+    #[tokio::main]
+    async fn init(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
+        if let Err(e) = self.check_for_update().await {
+            eprintln!("Failed to check for updates: {}", e);
+        }
+
         // Load or create the database
         let mut config_doc = self.find_or_create_db(prompt);
 
@@ -268,6 +379,10 @@ pub trait Make {
 impl Make for Config {
     #[tokio::main]
     async fn make(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
+        if let Err(e) = self.check_for_update().await {
+            eprintln!("Failed to check for updates: {}", e);
+        }
+
         let current_repo_path = db_reader::get_canonical_path(".");
         let mut config_doc = self.find_or_create_db(prompt);
 
@@ -331,7 +446,12 @@ pub trait Edit {
 }
 
 impl Edit for Config {
-    fn edit(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
+    #[tokio::main]
+    async fn edit(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
+        if let Err(e) = self.check_for_update().await {
+            eprintln!("Failed to check for updates: {}", e);
+        }
+
         // Load or create the database, getting a ConfigurationDoc directly
         let mut config_doc = self.find_or_create_db(prompt);
 
@@ -412,7 +532,12 @@ pub trait Remove {
 }
 
 impl Remove for Config {
-    fn remove(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
+    #[tokio::main]
+    async fn remove(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
+        if let Err(e) = self.check_for_update().await {
+            eprintln!("Failed to check for updates: {}", e);
+        }
+
         // Load or create the database, getting a ConfigurationDoc directly
         let mut config_doc = self.find_or_create_db(prompt);
 
@@ -477,7 +602,12 @@ pub trait Update {
 }
 
 impl Update for Config {
-    fn update(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
+    #[tokio::main]
+    async fn update(&self, options: Vec<Option<String>>, prompt: &mut HelpPrompt) {
+        if let Err(e) = self.check_for_update().await {
+            eprintln!("Failed to check for updates: {}", e);
+        }
+
         // Load or create the database, getting a ConfigurationDoc directly
         let mut config_doc = self.find_or_create_db(prompt);
 
@@ -547,7 +677,12 @@ pub trait List {
 }
 
 impl List for Config {
-    fn list(&self, prompt: &mut HelpPrompt) {
+    #[tokio::main]
+    async fn list(&self, prompt: &mut HelpPrompt) {
+        if let Err(e) = self.check_for_update().await {
+            eprintln!("Failed to check for updates: {}", e);
+        }
+
         // Load or create the database, getting a ConfigurationDoc directly
         let config_doc = self.find_or_create_db(prompt);
 
