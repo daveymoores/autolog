@@ -166,7 +166,7 @@ fn delete_client_repositories_by_client_id(
 /// Get the platform-specific path for the database
 pub fn get_db_path() -> PathBuf {
     if is_test_mode() {
-        PathBuf::from("./testing-utils").join(DB_FILE_NAME)
+        PathBuf::from("file:memdb_test?mode=memory&cache=shared")
     } else {
         let proj_dirs = ProjectDirs::from("dev", "autolog", "cli")
             .expect("Failed to determine app data directory");
@@ -182,8 +182,23 @@ pub fn get_db_path() -> PathBuf {
 /// Get a database connection
 pub fn get_connection() -> Result<Connection> {
     let db_path = get_db_path();
-    let conn =
-        Connection::open(&db_path).context(format!("Failed to open database at {:?}", db_path))?;
+    let db_path_str = db_path.to_str().unwrap_or("");
+
+    let conn = if is_test_mode() {
+        // Use URI flags to properly open the shared in-memory database
+        Connection::open_with_flags(
+            db_path_str,
+            rusqlite::OpenFlags::SQLITE_OPEN_URI
+                | rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
+        )
+        .context(format!(
+            "Failed to open in-memory database with URI {}",
+            db_path_str
+        ))?
+    } else {
+        Connection::open(&db_path).context(format!("Failed to open database at {:?}", db_path))?
+    };
 
     // Enable foreign key support
     conn.execute("PRAGMA foreign_keys = ON", [])?;
@@ -194,8 +209,90 @@ pub fn get_connection() -> Result<Connection> {
     Ok(conn)
 }
 
+pub fn should_check_for_updates() -> Result<bool, Box<dyn std::error::Error>> {
+    let conn = get_connection()?;
+
+    // Get the most recent cache entry
+    let result = conn.query_row(
+        "SELECT last_checked, latest_version FROM version_cache
+         ORDER BY last_checked DESC LIMIT 1",
+        [],
+        |row| {
+            let last_checked: String = row.get(0)?;
+            let latest_version: String = row.get(1)?;
+            Ok((last_checked, latest_version))
+        },
+    );
+
+    match result {
+        Ok((last_checked_str, _)) => {
+            // Parse the last_checked timestamp
+            let last_checked = chrono::DateTime::parse_from_rfc3339(&last_checked_str)
+                .map_err(|e| format!("Invalid timestamp format: {}", e))?
+                .with_timezone(&chrono::Utc);
+
+            // Get current time
+            let now = chrono::Utc::now();
+            // Check once a day (86400 seconds)
+            Ok((now - last_checked).num_seconds() >= 86400)
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            // No cache entry yet, should check
+            Ok(true)
+        }
+        Err(e) => Err(Box::new(e)),
+    }
+}
+
+/// Update the version cache with the latest version
+pub fn update_version_cache(latest_version: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = get_connection()?;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT INTO version_cache (last_checked, latest_version) VALUES (?, ?)",
+        params![now, latest_version],
+    )?;
+
+    // Keep only the most recent 5 entries to prevent unlimited growth
+    conn.execute(
+        "DELETE FROM version_cache WHERE id NOT IN (
+            SELECT id FROM version_cache ORDER BY last_checked DESC LIMIT 5
+        )",
+        [],
+    )?;
+
+    Ok(())
+}
+
+/// Get the latest version from cache without checking for updates
+pub fn get_cached_version() -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let conn = get_connection()?;
+
+    match conn.query_row(
+        "SELECT latest_version FROM version_cache
+         ORDER BY last_checked DESC LIMIT 1",
+        [],
+        |row| row.get::<_, String>(0),
+    ) {
+        Ok(version) => Ok(Some(version)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(Box::new(e)),
+    }
+}
+
 /// Initialize the database schema if tables don't exist
 fn init_schema(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS version_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        last_checked TEXT NOT NULL,
+        latest_version TEXT NOT NULL
+        )",
+        [],
+    )
+    .context("Failed to create version_cache table")?;
+
     // Create clients table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS clients (
@@ -356,7 +453,7 @@ pub fn delete_db() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Save a ClientRepositories object to the database, including handling repository removals
-fn save_client_repository(
+pub fn save_client_repository(
     tx: &rusqlite::Transaction,
     client_repo: &ClientRepositories,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -994,34 +1091,45 @@ pub fn get_canonical_path(path: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod test_utils {
     use super::*;
     use crate::data::client_repositories::{Approver, Client, ClientRepositories, User};
     use crate::data::repository::Repository;
     use rusqlite::Connection;
     use std::collections::{HashMap, HashSet};
-    use std::env;
-    use tempfile::tempdir;
 
     // Helper function to set up a test database
-    fn setup_test_db() -> Connection {
+    pub fn setup_test_db() -> Connection {
         // Use in-memory database for tests
-        let conn = Connection::open(":memory:").unwrap();
+        let conn = Connection::open("file:memdb_test?mode=memory&cache=shared").unwrap();
         init_schema(&conn).unwrap();
+
+        // Clear all tables
+        conn.execute("DELETE FROM approvers", []).unwrap();
+        conn.execute("DELETE FROM client_repositories", []).unwrap();
+        conn.execute("DELETE FROM timesheet_entries", []).unwrap();
+        conn.execute("DELETE FROM git_log_days", []).unwrap();
+        conn.execute("DELETE FROM git_log_months", []).unwrap();
+        conn.execute("DELETE FROM git_log_years", []).unwrap();
+        conn.execute("DELETE FROM repositories", []).unwrap();
+        conn.execute("DELETE FROM users", []).unwrap();
+        conn.execute("DELETE FROM clients", []).unwrap();
+        conn.execute("DELETE FROM version_cache", []).unwrap();
+
         conn
     }
 
     // Helper to create a basic client repository
-    fn create_test_client(id: &str, name: &str) -> ClientRepositories {
+    pub fn create_test_client(client_name: &str, repository_name: &str) -> ClientRepositories {
         let client = Client {
-            id: id.to_string(),
-            client_name: name.to_string(),
+            id: client_name.to_lowercase().to_string(),
+            client_name: client_name.to_string(),
             client_address: "123 Test St".to_string(),
             client_contact_person: "Test Contact".to_string(),
         };
 
         let user = User {
-            id: format!("user-{}", id),
+            id: format!("user-{}", client_name),
             name: "Test User".to_string(),
             email: "test@example.com".to_string(),
             is_alias: false,
@@ -1034,16 +1142,16 @@ mod tests {
         };
 
         let repository = Repository {
-            id: Some(format!("repo-{}", id)),
-            namespace: Some("test-namespace".to_string()),
+            id: Some(format!("repo-{}", repository_name.to_lowercase())),
+            namespace: Some(repository_name.to_string()),
             namespace_alias: None,
             repo_path: Some("/test/path".to_string()),
             git_path: Some("/test/git/path".to_string()),
             user_id: Some(user.id.clone()),
             name: Some("Test Repo".to_string()),
             email: Some("repo@example.com".to_string()),
-            client_id: Some(id.to_string()),
-            client_name: Some(name.to_string()),
+            client_id: Some(client_name.to_string()),
+            client_name: Some(client_name.to_string()),
             client_contact_person: Some("Test Contact".to_string()),
             client_address: Some("123 Test St".to_string()),
             project_number: Some("PROJECT-123".to_string()),
@@ -1063,53 +1171,87 @@ mod tests {
     }
 
     // Helper to create test git log dates
-    fn create_test_git_log_dates() -> HashMap<i32, HashMap<u32, HashSet<u32>>> {
+    pub fn create_test_git_log_dates() -> HashMap<i32, HashMap<u32, HashSet<u32>>> {
         let mut git_log_dates = HashMap::new();
-        let mut months = HashMap::new();
-        let mut days = HashSet::new();
-        days.insert(15);
-        days.insert(16);
-        months.insert(5, days);
-        git_log_dates.insert(2023, months);
+        // Create data for May 2023
+        let mut months_2023 = HashMap::new();
+        let mut days_may = HashSet::new();
+        days_may.insert(15);
+        days_may.insert(16);
+        months_2023.insert(5, days_may);
+        git_log_dates.insert(2023, months_2023);
+
+        // Create data for November 2021
+        let mut months_2021 = HashMap::new();
+        let mut days_nov = HashSet::new();
+        days_nov.insert(1); // 1st of November
+        months_2021.insert(11, days_nov);
+        git_log_dates.insert(2021, months_2021);
+
         git_log_dates
     }
 
     // Helper to create test timesheet
-    fn create_test_timesheet()
+    pub fn create_test_timesheet()
     -> HashMap<String, HashMap<String, Vec<serde_json::Map<String, serde_json::Value>>>> {
         let mut timesheet = HashMap::new();
-        let mut months = HashMap::new();
-        let mut days = Vec::new();
 
-        // Fill with empty days
+        // Create data for May 2023
+        let mut may_2023 = HashMap::new();
+        let mut days_may = Vec::new();
         for _ in 0..30 {
-            days.push(serde_json::Map::new());
+            days_may.push(serde_json::Map::new());
         }
-
-        // Add data for day 15
-        let mut day_data = serde_json::Map::new();
-        day_data.insert(
+        let mut day_data_may = serde_json::Map::new();
+        day_data_may.insert(
             "hours".to_string(),
             serde_json::Value::Number(serde_json::Number::from(8)),
         );
-        day_data.insert("weekend".to_string(), serde_json::Value::Bool(false));
-        day_data.insert("user_edited".to_string(), serde_json::Value::Bool(true));
-        days[14] = day_data;
+        day_data_may.insert("weekend".to_string(), serde_json::Value::Bool(false));
+        day_data_may.insert("user_edited".to_string(), serde_json::Value::Bool(true));
+        days_may[14] = day_data_may;
+        may_2023.insert("05".to_string(), days_may);
+        timesheet.insert("2023".to_string(), may_2023);
 
-        months.insert("05".to_string(), days);
-        timesheet.insert("2023".to_string(), months);
+        // Create data for November 2021
+        let mut nov_2021 = HashMap::new();
+        let mut days_nov = Vec::new();
+        for _ in 0..30 {
+            days_nov.push(serde_json::Map::new());
+        }
+        let mut day_data_nov = serde_json::Map::new();
+        day_data_nov.insert(
+            "hours".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(8)),
+        );
+        day_data_nov.insert("weekend".to_string(), serde_json::Value::Bool(false));
+        day_data_nov.insert("user_edited".to_string(), serde_json::Value::Bool(true));
+        days_nov[0] = day_data_nov; // 1st of November
+        nov_2021.insert("11".to_string(), days_nov);
+        timesheet.insert("2021".to_string(), nov_2021);
+
         timesheet
     }
 
     // Helper to count entities in database
-    fn count_entities(conn: &Connection, table: &str) -> i64 {
+    pub fn count_entities(conn: &Connection, table: &str) -> i64 {
         conn.query_row(&format!("SELECT COUNT(*) FROM {}", table), [], |row| {
             row.get(0)
         })
         .unwrap_or(0)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_utils::*;
+    use super::*;
+    use rusqlite::Connection;
+    use std::env;
+    use tempfile::tempdir;
 
     #[test]
+    #[serial_test::serial]
     fn test_save_and_delete_single_client() {
         // Force test mode
         unsafe { env::set_var("TEST_MODE", "1") };
@@ -1118,7 +1260,7 @@ mod tests {
         let tx = conn.transaction().unwrap();
 
         // Create configuration with one client
-        let client_repo = create_test_client("client1", "Client One");
+        let client_repo = create_test_client("client1", "repo1");
         let config_doc = vec![client_repo];
 
         // Save the client
@@ -1131,10 +1273,10 @@ mod tests {
         assert_eq!(count_entities(&conn, "users"), 1);
         assert_eq!(count_entities(&conn, "client_repositories"), 1);
         assert_eq!(count_entities(&conn, "approvers"), 1);
-        assert_eq!(count_entities(&conn, "git_log_years"), 1);
-        assert_eq!(count_entities(&conn, "git_log_months"), 1);
-        assert_eq!(count_entities(&conn, "git_log_days"), 2); // We added 2 days
-        assert_eq!(count_entities(&conn, "timesheet_entries"), 30);
+        assert_eq!(count_entities(&conn, "git_log_years"), 2);
+        assert_eq!(count_entities(&conn, "git_log_months"), 2);
+        assert_eq!(count_entities(&conn, "git_log_days"), 3); // three days
+        assert_eq!(count_entities(&conn, "timesheet_entries"), 60); // two months so 60 days
 
         // Now delete the client
         let tx = conn.transaction().unwrap();
@@ -1156,6 +1298,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_save_and_remove_deleted_clients() {
         // Force test mode
         unsafe { env::set_var("TEST_MODE", "1") };
@@ -1163,8 +1306,8 @@ mod tests {
         let mut conn = setup_test_db();
 
         // Create configuration with two clients
-        let client_repo1 = create_test_client("client1", "Client One");
-        let client_repo2 = create_test_client("client2", "Client Two");
+        let client_repo1 = create_test_client("client1", "repo1");
+        let client_repo2 = create_test_client("client2", "repo2");
         let config_doc = vec![client_repo1, client_repo2];
 
         // Save both clients
@@ -1198,6 +1341,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_full_save_config_doc_with_removal() {
         // Force test mode
         unsafe { env::set_var("TEST_MODE", "1") };
@@ -1215,8 +1359,8 @@ mod tests {
         init_schema(&conn).unwrap();
 
         // Create two clients
-        let client_repo1 = create_test_client("client1", "Client One");
-        let client_repo2 = create_test_client("client2", "Client Two");
+        let client_repo1 = create_test_client("client1", "repo1");
+        let client_repo2 = create_test_client("client2", "repo2");
         let config_doc = vec![client_repo1.clone(), client_repo2.clone()];
 
         // Save both clients manually to the test database
@@ -1255,5 +1399,70 @@ mod tests {
             .query_row("SELECT id FROM clients", [], |row| row.get(0))
             .unwrap();
         assert_eq!(client_id, "client1");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_version_cache_functions() {
+        // Setup
+        unsafe { env::set_var("TEST_MODE", "1") };
+        let conn = setup_test_db();
+
+        // No cache exists initially
+        assert_eq!(should_check_for_updates().expect("Should succeed"), true);
+        assert_eq!(get_cached_version().expect("Should succeed"), None);
+
+        // Insert old timestamp to test time-based check
+        let timestamp = (chrono::Utc::now() - chrono::Duration::days(2)).to_rfc3339();
+        conn.execute(
+            "INSERT INTO version_cache (last_checked, latest_version) VALUES (?, ?)",
+            params![timestamp, "0.9.0"],
+        )
+        .unwrap();
+
+        // Old cache entry should trigger check
+        assert!(should_check_for_updates().unwrap());
+
+        // Update cache with recent version
+        update_version_cache("1.0.0").expect("Should succeed");
+        assert_eq!(
+            get_cached_version().expect("Should succeed"),
+            Some("1.0.0".to_string())
+        );
+
+        // Recent cache entry should not trigger check
+        assert_eq!(should_check_for_updates().expect("Should succeed"), false);
+
+        // Test most recent version is returned
+        let newer_timestamp = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO version_cache (last_checked, latest_version) VALUES (?, ?)",
+            params![newer_timestamp, "1.1.0"],
+        )
+        .unwrap();
+
+        assert_eq!(get_cached_version().unwrap(), Some("1.1.0".to_string()));
+
+        // Test only 5 most recent entries are kept
+        for i in 2..8 {
+            update_version_cache(&format!("1.{}.0", i)).unwrap();
+        }
+
+        assert_eq!(count_entities(&conn, "version_cache"), 5);
+
+        // Verify correct versions retained
+        let versions: Vec<String> = conn
+            .prepare("SELECT latest_version FROM version_cache ORDER BY last_checked ASC")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+
+        assert_eq!(versions.len(), 5);
+        assert!(versions.contains(&"1.3.0".to_string()));
+        assert!(versions.contains(&"1.7.0".to_string()));
+        assert!(!versions.contains(&"1.1.0".to_string()));
+        assert!(!versions.contains(&"1.2.0".to_string()));
     }
 }

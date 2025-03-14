@@ -358,6 +358,9 @@ impl<'a> HelpPrompt<'a> {
             let ascii_table = AsciiTable::default();
             let logo = [[Style::new().bold().paint("A U T O L O G")]];
             ascii_table.print(logo);
+
+            let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+            println!("{}", Style::new().dimmed().paint(version));
         }
 
         let current_repo_path = db_reader::get_canonical_path(".");
