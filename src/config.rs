@@ -157,7 +157,8 @@ impl Config {
         let current_version = Version::parse(current_version_str)?;
 
         // Check if we should check for updates based on the cache
-        let should_check = crate::utils::db::db_reader::should_check_for_updates()?;
+        let should_check = !crate::utils::is_test_mode()
+            && crate::utils::db::db_reader::should_check_for_updates()?;
 
         if should_check {
             // Cache is stale or non-existent, do a fresh check from Homebrew
@@ -454,7 +455,7 @@ impl Edit for Config {
 
         // Load or create the database, getting a ConfigurationDoc directly
         let mut config_doc = self.find_or_create_db(prompt);
-
+        println!("{:?}", config_doc);
         if !config_doc.is_empty() {
             // Find the repository to edit by namespace
             let (found_repo, found_client_repo) = self
@@ -471,7 +472,6 @@ impl Edit for Config {
 
             // Set the prompt with found values to prepare for editing
             Self::set_prompt_with_found_values(prompt, found_repo, found_client_repo);
-
             if found_client_repo.is_some() {
                 // Update the hours in the repository's timesheet
                 prompt
@@ -701,17 +701,39 @@ mod tests {
     use crate::config::{Config, Edit, New, Remove};
     use crate::data::client_repositories::ClientRepositories;
     use crate::data::repository::Repository;
-    use crate::helpers::mocks;
     use crate::interface::help_prompt::ConfigurationDoc;
+    use crate::utils::db::db_reader::test_utils::{create_test_client, setup_test_db};
     use envtestkit::lock::lock_test;
     use envtestkit::set_env;
     use serde_json::{Number, Value};
     use std::ffi::OsString;
 
+    fn is_repo_in_configuration_doc(config: &ConfigurationDoc, namespace: &String) -> bool {
+        config.iter().any(|client| {
+            client.repositories.as_ref().unwrap().iter().any(|repo| {
+                repo.namespace.as_ref().unwrap().to_lowercase() == namespace.to_lowercase()
+            })
+        })
+    }
+
+    fn is_client_in_configuration_doc(config: &ConfigurationDoc, client_name: &String) -> bool {
+        config.iter().any(|client| {
+            client.client.as_ref().unwrap().client_name.to_lowercase() == client_name.to_lowercase()
+        })
+    }
+
     #[test]
+    #[serial_test::serial]
     fn it_modifies_the_hour_entry_in_a_client_repository_day_entry() {
         let _lock = lock_test();
         let _test = set_env(OsString::from("TEST_MODE"), "true");
+        let mut conn = setup_test_db();
+
+        // Create test client with default timesheet data
+        let test_client = create_test_client("apple", "autolog");
+        let tx = conn.transaction().unwrap();
+        crate::utils::db::db_reader::save_client_repository(&tx, &test_client).unwrap();
+        tx.commit().unwrap();
 
         let config = Config::new();
         let options = vec![
@@ -753,24 +775,18 @@ mod tests {
         assert_eq!(edited_value, &Value::Bool(true));
     }
 
-    fn is_repo_in_configuration_doc(config: &ConfigurationDoc, namespace: &String) -> bool {
-        config.iter().any(|client| {
-            client.repositories.as_ref().unwrap().iter().any(|repo| {
-                repo.namespace.as_ref().unwrap().to_lowercase() == namespace.to_lowercase()
-            })
-        })
-    }
-
-    fn is_client_in_configuration_doc(config: &ConfigurationDoc, client_name: &String) -> bool {
-        config.iter().any(|client| {
-            client.client.as_ref().unwrap().client_name.to_lowercase() == client_name.to_lowercase()
-        })
-    }
-
     #[test]
+    #[serial_test::serial]
     fn it_removes_a_repository() {
         let _lock = lock_test();
         let _test = set_env(OsString::from("TEST_MODE"), "true");
+        let mut conn = setup_test_db();
+
+        // Create test data that matches what we're testing for
+        let test_client = create_test_client("apple", "autolog");
+        let tx = conn.transaction().unwrap();
+        crate::utils::db::db_reader::save_client_repository(&tx, &test_client).unwrap();
+        tx.commit().unwrap();
 
         let namespace = "autolog".to_string();
         let config = Config::new();
@@ -821,9 +837,17 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn it_removes_a_client() {
         let _lock = lock_test();
         let _test = set_env(OsString::from("TEST_MODE"), "true");
+        let mut conn = setup_test_db();
+
+        // Create test data
+        let test_client = create_test_client("apple", "autolog");
+        let tx = conn.transaction().unwrap();
+        crate::utils::db::db_reader::save_client_repository(&tx, &test_client).unwrap();
+        tx.commit().unwrap();
 
         let client = "apple".to_string();
         let config = Config::new();
@@ -866,13 +890,13 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn it_checks_for_repo_in_buffer_by_path_and_returns_a_tuple() {
-        let mut deserialized_config = ClientRepositories {
-            ..Default::default()
-        };
+        let _lock = lock_test();
+        let _test = set_env(OsString::from("TEST_MODE"), "true");
+        let _conn = setup_test_db();
 
-        mocks::create_mock_client_repository(&mut deserialized_config);
-
+        let deserialized_config = create_test_client("autolog", "autolog");
         let config: Config = Config::new();
 
         if let Some(repository) = config
@@ -893,13 +917,13 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn it_checks_for_repo_in_buffer_by_namespace_and_returns_a_tuple() {
-        let mut deserialized_config = ClientRepositories {
-            ..Default::default()
-        };
+        let _lock = lock_test();
+        let _test = set_env(OsString::from("TEST_MODE"), "true");
+        let _conn = setup_test_db();
 
-        mocks::create_mock_client_repository(&mut deserialized_config);
-
+        let deserialized_config = create_test_client("apple", "autolog");
         let config: Config = Config::new();
 
         if let Some(repository) = config
@@ -920,13 +944,13 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn it_checks_for_repo_in_buffer_by_client_and_returns_a_tuple() {
-        let mut deserialized_config = ClientRepositories {
-            ..Default::default()
-        };
+        let _lock = lock_test();
+        let _test = set_env(OsString::from("TEST_MODE"), "true");
+        let _conn = setup_test_db();
 
-        mocks::create_mock_client_repository(&mut deserialized_config);
-
+        let deserialized_config = create_test_client("apple", "autolog");
         let config: Config = Config::new();
 
         if let Some(client_repo) = config
@@ -934,14 +958,14 @@ mod tests {
                 &mut vec![deserialized_config],
                 Option::None,
                 Option::None,
-                Option::from(&"alphabet".to_string()),
+                Option::from(&"apple".to_string()),
             )
             .unwrap()
             .1
         {
             assert_eq!(
                 *client_repo.client.as_ref().unwrap().client_name,
-                "alphabet".to_string()
+                "apple".to_string()
             )
         }
     }

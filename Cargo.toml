@@ -39,6 +39,7 @@ semver = "1.0"
 assert_cmd = "2.0.2"
 predicates = "2.1.0"
 expect-test = "1.5.0"
+serial_test = "1.0"
 
 [build-dependencies]
 dotenv = "0.15.0"
