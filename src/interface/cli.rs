@@ -86,9 +86,9 @@ impl Cli<'_> {
                     isn't set, it defaults to the current day",
             );
 
-        let app: App = App::new("autolog")
-            .version("0.1")
-            .author("Davey Moores")
+        let app: App = App::new("AUTOLOG")
+            .version(env!("CARGO_PKG_VERSION"))
+            .author("David Jonathan Moores")
             .about(
                 "Minimal configuration, simple timesheets for sharing via pdf download or unique link.",
             ).subcommand(
