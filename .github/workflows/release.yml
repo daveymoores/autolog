@@ -46,16 +46,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up GitHub CLI
+        run: sudo apt-get install gh
+
       - name: Update Homebrew Formula
         run: |
           git clone https://github.com/daveymoores/homebrew-autolog
           cd homebrew-autolog
-          git checkout -b "update-formula-${GITHUB_REF#refs/tags/}"
+          git checkout -b "update-formula-${GITHUB_REF#refs/tags/}" || exit 1
           sed -i "s|url \".*\"|url \"https://github.com/daveymoores/autolog/releases/download/${GITHUB_REF#refs/tags/}/autolog-mac.tar.gz\"|" Formula/autolog.rb
           sed -i "s|sha256 \".*\"|sha256 \"${{ steps.sha256.outputs.sha256 }}\"|" Formula/autolog.rb
           git add Formula/autolog.rb
-          git commit -m "chore: Update autolog formula to ${GITHUB_REF#refs/tags/}"
-          git push origin "update-formula-${GITHUB_REF#refs/tags/}"
-          gh pr create --title "Update autolog formula to ${GITHUB_REF#refs/tags/}" --body "This PR updates the autolog formula to version ${GITHUB_REF#refs/tags/}"
+          git commit -m "chore: Update autolog formula to ${GITHUB_REF#refs/tags/}" || exit 1
+          git push origin "update-formula-${GITHUB_REF#refs/tags/}" || exit 1
+      - name: Create Pull Request
+        run: gh pr create --title "Update autolog formula to ${GITHUB_REF#refs/tags/}" --body "This PR updates the autolog formula to version ${GITHUB_REF#refs/tags/}" || exit 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
