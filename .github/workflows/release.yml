@@ -64,10 +64,9 @@ jobs:
           git add Formula/autolog.rb
           git commit -m "chore: Update autolog formula to ${GITHUB_REF#refs/tags/}" || exit 1
           git push https://${{ secrets.AUTOLOG_ACTION_PAT }}@github.com/daveymoores/homebrew-autolog.git "update-formula-${GITHUB_REF#refs/tags/}" || exit 1
-        env:
-          AUTOLOG_ACTION_PAT: ${{ secrets.AUTOLOG_ACTION_PAT }}
 
       - name: Create Pull Request
-        run: gh pr create --title "Update autolog formula to ${GITHUB_REF#refs/tags/}" --body "This PR updates the autolog formula to version ${GITHUB_REF#refs/tags/}" || exit 1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd homebrew-autolog
+          gh auth login --with-token <<< "${{ secrets.AUTOLOG_ACTION_PAT }}"
+          gh pr create --title "Update autolog formula to ${GITHUB_REF#refs/tags/}" --body "This PR updates the autolog formula to version ${GITHUB_REF#refs/tags/}" || exit 1
