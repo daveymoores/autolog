@@ -34,6 +34,9 @@ jobs:
       - name: Build the release
         run: cargo build --release
 
+      - name: Set executable permission
+        run: chmod +x target/release/autolog
+
       - name: Create tarball
         run: |
           cd target/release
