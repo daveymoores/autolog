@@ -63,9 +63,9 @@ jobs:
           sed -i "s|sha256 \".*\"|sha256 \"${{ steps.sha256.outputs.sha256 }}\"|" Formula/autolog.rb
           git add Formula/autolog.rb
           git commit -m "chore: Update autolog formula to ${GITHUB_REF#refs/tags/}" || exit 1
-
-          # Push using the token explicitly
           git push https://${{ secrets.AUTOLOG_ACTION_PAT }}@github.com/daveymoores/homebrew-autolog.git "update-formula-${GITHUB_REF#refs/tags/}" || exit 1
+        env:
+          AUTOLOG_ACTION_PAT: ${{ secrets.AUTOLOG_ACTION_PAT }}
 
       - name: Create Pull Request
         run: gh pr create --title "Update autolog formula to ${GITHUB_REF#refs/tags/}" --body "This PR updates the autolog formula to version ${GITHUB_REF#refs/tags/}" || exit 1
