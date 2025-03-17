@@ -14,20 +14,16 @@ env:
   TEST_MODE: false
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            artifact_name: autolog-mac.tar.gz
-          - os: ubuntu-latest
-            artifact_name: autolog-linux.tar.gz
+  release:
+    runs-on: macos-latest # Build only on macOS runner for macOS compatibility
 
-    runs-on: ${{ matrix.os }}
+    # Add permissions for the GITHUB_TOKEN
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v3 # Updated to latest version
 
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
@@ -44,53 +40,22 @@ jobs:
       - name: Create tarball
         run: |
           cd target/release
-          tar -czpf ${{ matrix.artifact_name }} autolog
+          # Preserve permissions with the 'p' flag
+          tar -czpf autolog-mac.tar.gz autolog
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: target/release/${{ matrix.artifact_name }}
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-
-    # Add permissions for the GITHUB_TOKEN
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Download all workflow artifacts
-        uses: actions/download-artifact@v3
-
-      - name: Generate SHA256 for macOS
-        id: sha256_mac
-        run: echo "sha256_mac=$(shasum -a 256 autolog-mac.tar.gz/autolog-mac.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
-
-      - name: Generate SHA256 for Linux
-        id: sha256_linux
-        run: echo "sha256_linux=$(shasum -a 256 autolog-linux.tar.gz/autolog-linux.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
-
-      - name: Move tarballs to root
-        run: |
-          mv autolog-mac.tar.gz/autolog-mac.tar.gz .
-          mv autolog-linux.tar.gz/autolog-linux.tar.gz .
+      - name: Generate SHA256
+        id: sha256
+        run: echo "sha256=$(shasum -a 256 target/release/autolog-mac.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            autolog-mac.tar.gz
-            autolog-linux.tar.gz
+          files: target/release/autolog-mac.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up GitHub CLI
-        run: sudo apt-get install gh
+        run: brew install gh # Use brew instead of apt-get on macOS
 
       - name: Configure Git
         run: |
@@ -119,50 +84,9 @@ jobs:
           git checkout -b "update-formula-${GITHUB_REF#refs/tags/}" || exit 1
 
           echo "Updating formula..."
-          # Create the updated formula file with platform-specific binaries
-          cat > Formula/autolog.rb << EOF
-          class Autolog < Formula
-            desc "CLI tool for automated logging"
-            homepage "https://github.com/daveymoores/autolog"
-            version "${GITHUB_REF#refs/tags/v}"
-            license "MIT"
-
-            on_macos do
-              url "https://github.com/daveymoores/autolog/releases/download/${GITHUB_REF#refs/tags/}/autolog-mac.tar.gz"
-              sha256 "${{ steps.sha256_mac.outputs.sha256_mac }}"
-            end
-
-            on_linux do
-              url "https://github.com/daveymoores/autolog/releases/download/${GITHUB_REF#refs/tags/}/autolog-linux.tar.gz"
-              sha256 "${{ steps.sha256_linux.outputs.sha256_linux }}"
-            end
-
-            def install
-              bin.install "autolog"
-              (var/"autolog").mkpath
-            end
-
-            def post_uninstall
-              if OS.mac?
-                db_dir = "\#{ENV["HOME"]}/Library/Application Support/dev.autolog.cli"
-                if Dir.exist?(db_dir)
-                  puts "Removing database directory at \#{db_dir}"
-                  system "rm", "-rf", db_dir
-                end
-              else
-                db_dir = "\#{ENV["HOME"]}/.local/share/dev.autolog.cli"
-                if Dir.exist?(db_dir)
-                  puts "Removing database directory at \#{db_dir}"
-                  system "rm", "-rf", db_dir
-                end
-              end
-            end
-
-            test do
-              assert_match "autolog version", shell_output("\#{bin}/autolog --version")
-            end
-          end
-          EOF
+          # On macOS sed is different, use this syntax
+          sed -i '' "s|url \".*\"|url \"https://github.com/daveymoores/autolog/releases/download/${GITHUB_REF#refs/tags/}/autolog-mac.tar.gz\"|" Formula/autolog.rb
+          sed -i '' "s|sha256 \".*\"|sha256 \"${{ steps.sha256.outputs.sha256 }}\"|" Formula/autolog.rb
 
           git add Formula/autolog.rb
           git commit -m "chore: Update autolog formula to ${GITHUB_REF#refs/tags/}" || exit 1
@@ -180,4 +104,4 @@ jobs:
 
           # Create PR with explicit head branch
           echo "Creating pull request..."
-          gh pr create --head "update-formula-${GITHUB_REF#refs/tags/}" --base main --title "Update autolog formula to ${GITHUB_REF#refs/tags/}" --body "This PR updates the autolog formula to support both macOS and Linux platforms for version ${GITHUB_REF#refs/tags/}" || exit 1
+          gh pr create --head "update-formula-${GITHUB_REF#refs/tags/}" --base main --title "Update autolog formula to ${GITHUB_REF#refs/tags/}" --body "This PR updates the autolog formula to version ${GITHUB_REF#refs/tags/}" || exit 1
