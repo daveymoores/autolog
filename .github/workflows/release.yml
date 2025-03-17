@@ -56,8 +56,8 @@ jobs:
 
       - name: Update Homebrew Formula
         run: |
-          # Use GITHUB_TOKEN for authentication in the git clone URL
-          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/daveymoores/homebrew-autolog.git
+          # Use AUTOLOG_ACTION_PAT for authentication in the git clone URL
+          git clone https://x-access-token:${{ secrets.AUTOLOG_ACTION_PAT }}@github.com/daveymoores/homebrew-autolog.git
           cd homebrew-autolog
           git checkout -b "update-formula-${GITHUB_REF#refs/tags/}" || exit 1
           sed -i "s|url \".*\"|url \"https://github.com/daveymoores/autolog/releases/download/${GITHUB_REF#refs/tags/}/autolog-mac.tar.gz\"|" Formula/autolog.rb
@@ -66,7 +66,7 @@ jobs:
           git commit -m "chore: Update autolog formula to ${GITHUB_REF#refs/tags/}" || exit 1
           git push origin "update-formula-${GITHUB_REF#refs/tags/}" || exit 1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTOLOG_ACTION_PAT: ${{ secrets.AUTOLOG_ACTION_PAT }}
 
       - name: Create Pull Request
         run: gh pr create --title "Update autolog formula to ${GITHUB_REF#refs/tags/}" --body "This PR updates the autolog formula to version ${GITHUB_REF#refs/tags/}" || exit 1
