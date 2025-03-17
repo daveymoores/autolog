@@ -49,6 +49,11 @@ jobs:
       - name: Set up GitHub CLI
         run: sudo apt-get install gh
 
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "github-actions@github.com"
+
       - name: Update Homebrew Formula
         run: |
           git clone https://github.com/daveymoores/homebrew-autolog
