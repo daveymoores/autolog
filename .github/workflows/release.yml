@@ -17,9 +17,13 @@ jobs:
   release:
     runs-on: ubuntu-latest
 
+    # Add permissions for the GITHUB_TOKEN
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3 # Updated to latest version
 
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
@@ -37,7 +41,8 @@ jobs:
 
       - name: Generate SHA256
         id: sha256
-        run: echo "::set-output name=sha256::$(shasum -a 256 target/release/autolog-mac.tar.gz | awk '{print $1}')"
+        # Using the updated GitHub Actions output syntax
+        run: echo "sha256=$(shasum -a 256 target/release/autolog-mac.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -54,19 +59,46 @@ jobs:
           git config --global user.name "GitHub Actions"
           git config --global user.email "github-actions@github.com"
 
-      - name: Update Homebrew Formula
+      - name: Check if token is available
         run: |
-          git clone https://${{ secrets.AUTOLOG_ACTION_PAT }}@github.com/daveymoores/homebrew-autolog.git
+          if [ -z "${{ secrets.AUTOLOG_ACTION_PAT }}" ]; then
+            echo "Error: AUTOLOG_ACTION_PAT secret is not available"
+            exit 1
+          else
+            echo "Secret is available"
+          fi
+
+      - name: Update Homebrew Formula
+        # Using token in a safer way
+        run: |
+          # Export token to an environment variable instead of using in URL
+          export TOKEN="${{ secrets.AUTOLOG_ACTION_PAT }}"
+
+          # Clone using token
+          echo "Cloning repository..."
+          git clone "https://${TOKEN}@github.com/daveymoores/homebrew-autolog.git"
+
           cd homebrew-autolog
           git checkout -b "update-formula-${GITHUB_REF#refs/tags/}" || exit 1
+
+          echo "Updating formula..."
           sed -i "s|url \".*\"|url \"https://github.com/daveymoores/autolog/releases/download/${GITHUB_REF#refs/tags/}/autolog-mac.tar.gz\"|" Formula/autolog.rb
           sed -i "s|sha256 \".*\"|sha256 \"${{ steps.sha256.outputs.sha256 }}\"|" Formula/autolog.rb
+
           git add Formula/autolog.rb
           git commit -m "chore: Update autolog formula to ${GITHUB_REF#refs/tags/}" || exit 1
-          git push https://${{ secrets.AUTOLOG_ACTION_PAT }}@github.com/daveymoores/homebrew-autolog.git "update-formula-${GITHUB_REF#refs/tags/}" || exit 1
+
+          echo "Pushing changes..."
+          # Push using token variable instead of hardcoding in URL
+          git push "https://${TOKEN}@github.com/daveymoores/homebrew-autolog.git" "update-formula-${GITHUB_REF#refs/tags/}" || exit 1
 
       - name: Create Pull Request
         run: |
           cd homebrew-autolog
-          gh auth login --with-token <<< "${{ secrets.AUTOLOG_ACTION_PAT }}"
+
+          # Set GH_TOKEN environment variable for GitHub CLI
+          export GH_TOKEN="${{ secrets.AUTOLOG_ACTION_PAT }}"
+
+          # Create PR
+          echo "Creating pull request..."
           gh pr create --title "Update autolog formula to ${GITHUB_REF#refs/tags/}" --body "This PR updates the autolog formula to version ${GITHUB_REF#refs/tags/}" || exit 1
