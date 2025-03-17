@@ -11,6 +11,7 @@ env:
   MONGODB_DB: ${{ secrets.MONGODB_DB }}
   EXPIRE_TIME_SECONDS: ${{ secrets.EXPIRE_TIME_SECONDS }}
   MONGODB_COLLECTION: ${{ secrets.MONGODB_COLLECTION }}
+  TEST_MODE: false
 
 jobs:
   release:
