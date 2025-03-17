@@ -99,6 +99,6 @@ jobs:
           # Set GH_TOKEN environment variable for GitHub CLI
           export GH_TOKEN="${{ secrets.AUTOLOG_ACTION_PAT }}"
 
-          # Create PR
+          # Create PR with explicit head branch
           echo "Creating pull request..."
-          gh pr create --title "Update autolog formula to ${GITHUB_REF#refs/tags/}" --body "This PR updates the autolog formula to version ${GITHUB_REF#refs/tags/}" || exit 1
+          gh pr create --head "update-formula-${GITHUB_REF#refs/tags/}" --base main --title "Update autolog formula to ${GITHUB_REF#refs/tags/}" --body "This PR updates the autolog formula to version ${GITHUB_REF#refs/tags/}" || exit 1
