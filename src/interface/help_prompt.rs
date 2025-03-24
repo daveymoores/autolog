@@ -35,6 +35,7 @@ impl<'a> Onboarding for HelpPrompt<'a> {
         self.confirm_repository_path(new_user)?
             .search_for_repository_details(Option::None)?
             .add_client_details()?
+            .specify_default_hours()?
             .show_details();
         Ok(())
     }
@@ -489,6 +490,33 @@ impl<'a> HelpPrompt<'a> {
         self.repository.set_client_id(nanoid!());
 
         Ok(self)
+    }
+
+    pub fn specify_default_hours(&mut self) -> Result<&mut Self, std::io::Error> {
+        loop {
+            Self::print_question("Default hours per day (0-24)");
+
+            let input: String = Input::new()
+                .default("8".into()) // Set default value to "8"
+                .show_default(true) // Show the default in the prompt
+                .interact_text()?;
+
+            // Parse the input string to an unsigned integer
+            match input.trim().parse::<f64>() {
+                Ok(hours) => {
+                    // Validate the range
+                    if hours <= 24.0 {
+                        self.repository.set_default_hours(hours);
+                        return Ok(self);
+                    } else {
+                        eprintln!("Hours must be between 0 and 24. Please try again.");
+                    }
+                }
+                Err(_) => {
+                    eprintln!("Invalid input. Please enter a valid number between 0 and 24.");
+                }
+            }
+        }
     }
 
     pub fn prompt_for_manager_approval(&mut self) -> Result<&mut Self, Box<dyn Error>> {

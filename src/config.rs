@@ -6,6 +6,7 @@ use crate::interface::help_prompt::Onboarding;
 use crate::utils::db::db_reader;
 use crate::utils::exit_process;
 use crate::utils::link::link_builder;
+use ansi_term::Style;
 use semver::Version;
 use std::process;
 
@@ -266,7 +267,12 @@ impl Config {
             Ok(_) | Err(_) => {
                 // Either database is empty or doesn't exist
                 // In both cases, we need to create new configuration
-                eprintln!("Creating new autolog configuration");
+                println!(
+                    "{}",
+                    Style::new()
+                        .dimmed()
+                        .paint("\u{1F916} Creating new autolog configuration...")
+                );
 
                 // Run onboarding
                 self.create_new_configuration(prompt)
@@ -455,7 +461,7 @@ impl Edit for Config {
 
         // Load or create the database, getting a ConfigurationDoc directly
         let mut config_doc = self.find_or_create_db(prompt);
-        println!("{:?}", config_doc);
+
         if !config_doc.is_empty() {
             // Find the repository to edit by namespace
             let (found_repo, found_client_repo) = self

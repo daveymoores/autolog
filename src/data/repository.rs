@@ -34,6 +34,7 @@ pub struct Repository {
     pub timesheet: Option<TimesheetYears>,
     pub service: Option<String>,
     pub service_username: Option<String>,
+    pub default_hours: Option<f64>,
 }
 
 struct Iter<'a> {
@@ -83,6 +84,11 @@ impl Repository {
 
     pub fn set_client_id(&mut self, id: String) -> &mut Self {
         self.client_id = Option::from(id);
+        self
+    }
+
+    pub fn set_default_hours(&mut self, hours: f64) -> &mut Self {
+        self.default_hours = Option::from(hours);
         self
     }
 
