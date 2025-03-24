@@ -519,40 +519,6 @@ impl<'a> HelpPrompt<'a> {
         }
     }
 
-    pub fn prompt_for_manager_approval(&mut self) -> Result<&mut Self, Box<dyn Error>> {
-        let prompt_for_approver = match self.client_repositories.requires_approval {
-            None => true,
-            Some(requires_approval) => !requires_approval,
-        };
-
-        if prompt_for_approver {
-            Self::print_question("Do timesheets under this client require approval?");
-            println!(
-                "{}",
-                Self::dim_text(
-                    "(This will enable signing functionality, see https://autolog.dev/docs/signing)",
-                )
-            );
-
-            if Confirm::new().default(true).interact()? {
-                Self::print_question("Approvers name");
-                let input: String = Input::new().interact_text()?;
-                self.client_repositories.set_approvers_name(input);
-
-                Self::print_question("Approvers email");
-                let input: String = Input::new().interact_text()?;
-                self.client_repositories.set_approvers_email(input);
-
-                // TODO - check the above are set before setting this
-                self.client_repositories.set_requires_approval(true);
-            } else {
-                self.client_repositories.set_requires_approval(false);
-            }
-        }
-
-        Ok(self)
-    }
-
     pub fn add_project_numbers(&mut self) -> Result<&mut Self, Box<dyn Error>> {
         println!(
             "{}",
