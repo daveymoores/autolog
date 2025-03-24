@@ -3,7 +3,6 @@ use crate::data::repository::Repository;
 use crate::interface::help_prompt::ConfigurationDoc;
 use crate::utils::is_test_mode;
 use anyhow::{Context, Result};
-use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
@@ -165,17 +164,23 @@ fn delete_client_repositories_by_client_id(
 /// Get the platform-specific path for the database
 pub fn get_db_path() -> PathBuf {
     if is_test_mode() {
-        PathBuf::from("file:memdb_test?mode=memory&cache=shared")
-    } else {
-        let proj_dirs = ProjectDirs::from("dev", "autolog", "cli")
-            .expect("Failed to determine app data directory");
-
-        let data_dir = proj_dirs.data_dir();
-        // Ensure directory exists
-        fs::create_dir_all(data_dir).expect("Failed to create data directory");
-
-        data_dir.join(DB_FILE_NAME)
+        return PathBuf::from("file:memdb_test?mode=memory&cache=shared");
     }
+
+    // Get Homebrew prefix - this should always be available when installed through Homebrew
+    let homebrew_prefix = std::env::var("HOMEBREW_PREFIX")
+        .expect("HOMEBREW_PREFIX environment variable not found. This application should be installed via Homebrew.");
+
+    // Use Homebrew's etc directory pattern: #{HOMEBREW_PREFIX}/etc/#{name}
+    let config_dir = PathBuf::from(homebrew_prefix).join("etc").join("autolog");
+
+    // Ensure directory exists
+    fs::create_dir_all(&config_dir).expect(&format!(
+        "Failed to create config directory at {:?}",
+        config_dir
+    ));
+
+    config_dir.join(DB_FILE_NAME)
 }
 
 /// Get a database connection
