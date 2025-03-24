@@ -12,7 +12,9 @@ fn return_worked_hours_from_worked_days(
     worked_days: &[u32],
     day: &u32,
     adjacent_days_in_month: &[HashSet<u32>],
+    default_hours: Option<f64>,
 ) -> f64 {
+    let hours = if let Some(h) = default_hours { h } else { 8.0 };
     // if day exists in adjacent days, then split the number of hours by number of occurrences
     let frequency_of_day_worked_in_adjacent_timesheets: f64 = (adjacent_days_in_month
         .iter()
@@ -24,7 +26,7 @@ fn return_worked_hours_from_worked_days(
 
     let worked_day = worked_days.contains(day);
     match worked_day {
-        true => 8.0 / frequency_of_day_worked_in_adjacent_timesheets,
+        true => hours / frequency_of_day_worked_in_adjacent_timesheets,
         false => 0.0,
     }
 }
@@ -70,8 +72,12 @@ fn parse_hours_from_date(
     for day in 1..date_tuple.2 + 1 {
         let is_weekend: bool = is_weekend(&date_tuple, day);
         let mut day_map = Map::new();
-        let hours_worked =
-            return_worked_hours_from_worked_days(&worked_days, &day, &adjacent_days_in_month);
+        let hours_worked = return_worked_hours_from_worked_days(
+            &worked_days,
+            &day,
+            &adjacent_days_in_month,
+            repository.default_hours,
+        );
 
         // Each day denotes whether it is a Weekend, what the hours worked are
         // and whether it has been manually edited by the user to prevent these
@@ -271,19 +277,39 @@ mod tests {
     fn it_returns_worked_hours_from_worked_days() {
         let adjacent_days_in_month = vec![HashSet::from([1, 2, 3]), HashSet::from([2, 3, 4])];
         assert_eq!(
-            return_worked_hours_from_worked_days(&vec![1, 3, 6, 22], &2, &adjacent_days_in_month),
+            return_worked_hours_from_worked_days(
+                &vec![1, 3, 6, 22],
+                &2,
+                &adjacent_days_in_month,
+                Option::None
+            ),
             0.0
         );
         assert_eq!(
-            return_worked_hours_from_worked_days(&vec![1, 3, 6, 22], &22, &adjacent_days_in_month),
+            return_worked_hours_from_worked_days(
+                &vec![1, 3, 6, 22],
+                &22,
+                &adjacent_days_in_month,
+                Option::None
+            ),
             8.0
         );
         assert_eq!(
-            return_worked_hours_from_worked_days(&vec![1, 3, 4, 22], &4, &adjacent_days_in_month),
+            return_worked_hours_from_worked_days(
+                &vec![1, 3, 4, 22],
+                &4,
+                &adjacent_days_in_month,
+                Option::None
+            ),
             4.0
         );
         assert_eq!(
-            return_worked_hours_from_worked_days(&vec![1, 3, 4, 22], &3, &adjacent_days_in_month),
+            return_worked_hours_from_worked_days(
+                &vec![1, 3, 4, 22],
+                &3,
+                &adjacent_days_in_month,
+                Option::None
+            ),
             2.6666666666666665
         );
     }

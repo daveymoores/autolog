@@ -63,7 +63,6 @@ fn remove_deleted_client_repositories(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Fetch all existing clients from the database
     let existing_client_ids = fetch_all_clients(tx)?;
-    println!("existing client ids {:?}", existing_client_ids);
 
     // Iterate over the existing client_ids and remove those not in config_doc
     for client_id in existing_client_ids {
@@ -339,6 +338,7 @@ fn init_schema(conn: &Connection) -> Result<()> {
     service TEXT,
     service_username TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    default_hours FLOAT NOT NULL DEFAULT 8.0,
     FOREIGN KEY (client_id) REFERENCES clients (id)
     )",
         [],
@@ -567,7 +567,7 @@ pub fn save_client_repository(
 
                     if !repo_exists {
                         // Insert repository
-                        println!("Repository with ID {} doesn't exist, creating it", id);
+                        println!("Repository with ID {} doesn't exist, creating it...", id);
                         tx.execute(
                             "INSERT INTO repositories (id, name) VALUES (?1, ?2)",
                             params![id, repo.name.as_ref().unwrap_or(&String::from("Unknown"))],
@@ -580,8 +580,8 @@ pub fn save_client_repository(
             id, namespace, namespace_alias, repo_path, git_path,
             user_id, name, email, client_id, client_name,
             client_contact_person, client_address, project_number,
-            service, service_username
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            service, service_username, default_hours
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                         params![
                             id,
                             repo.namespace,
@@ -597,7 +597,8 @@ pub fn save_client_repository(
                             repo.client_address,
                             repo.project_number,
                             repo.service,
-                            repo.service_username
+                            repo.service_username,
+                            repo.default_hours
                         ],
                     )?;
 
@@ -618,7 +619,7 @@ pub fn save_client_repository(
                                 if !repo_exists {
                                     // Insert repository
                                     println!(
-                                        "Repository with ID {} doesn't exist, creating it",
+                                        "Repository with ID {} doesn't exist, creating it...",
                                         id
                                     );
                                     tx.execute(
@@ -636,8 +637,8 @@ pub fn save_client_repository(
                             id, namespace, namespace_alias, repo_path, git_path,
                             user_id, name, email, client_id, client_name,
                             client_contact_person, client_address, project_number,
-                            service, service_username
-                            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                            service, service_username, default_hours
+                            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                             params![
                               id,
                               repo.namespace,
@@ -653,7 +654,8 @@ pub fn save_client_repository(
                               repo.client_address,
                               repo.project_number,
                               repo.service,
-                              repo.service_username
+                              repo.service_username,
+                              repo.default_hours
                             ],
                           )?;
 
@@ -892,7 +894,7 @@ fn load_config_doc(conn: &Connection) -> Result<ConfigurationDoc, Box<dyn std::e
             "SELECT id, namespace, namespace_alias, repo_path, git_path,
       user_id, name, email, client_id, client_name,
       client_contact_person, client_address, project_number,
-      service, service_username
+      service, service_username, default_hours
       FROM repositories
       WHERE client_id = ?1",
         )?;
@@ -919,6 +921,7 @@ fn load_config_doc(conn: &Connection) -> Result<ConfigurationDoc, Box<dyn std::e
                 service_username: row.get(14)?,
                 git_log_dates: None,
                 timesheet: None,
+                default_hours: row.get(15)?,
             };
 
             Ok((repo_id, repository))
@@ -1159,6 +1162,7 @@ pub mod test_utils {
             service_username: Some("testuser".to_string()),
             git_log_dates: Some(create_test_git_log_dates()),
             timesheet: Some(create_test_timesheet()),
+            default_hours: Some(8.0),
         };
 
         ClientRepositories {

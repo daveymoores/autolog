@@ -455,7 +455,7 @@ impl Edit for Config {
 
         // Load or create the database, getting a ConfigurationDoc directly
         let mut config_doc = self.find_or_create_db(prompt);
-        println!("{:?}", config_doc);
+
         if !config_doc.is_empty() {
             // Find the repository to edit by namespace
             let (found_repo, found_client_repo) = self
