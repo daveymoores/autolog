@@ -62,7 +62,6 @@ fn remove_deleted_client_repositories(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Fetch all existing clients from the database
     let existing_client_ids = fetch_all_clients(tx)?;
-    println!("existing client ids {:?}", existing_client_ids);
 
     // Iterate over the existing client_ids and remove those not in config_doc
     for client_id in existing_client_ids {
