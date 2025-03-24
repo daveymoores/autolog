@@ -6,6 +6,7 @@ use crate::interface::help_prompt::Onboarding;
 use crate::utils::db::db_reader;
 use crate::utils::exit_process;
 use crate::utils::link::link_builder;
+use ansi_term::Style;
 use semver::Version;
 use std::process;
 
@@ -266,7 +267,12 @@ impl Config {
             Ok(_) | Err(_) => {
                 // Either database is empty or doesn't exist
                 // In both cases, we need to create new configuration
-                eprintln!("Creating new autolog configuration");
+                println!(
+                    "{}",
+                    Style::new()
+                        .dimmed()
+                        .paint("\u{1F916} Creating new autolog configuration...")
+                );
 
                 // Run onboarding
                 self.create_new_configuration(prompt)

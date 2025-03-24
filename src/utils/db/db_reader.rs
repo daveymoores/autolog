@@ -567,7 +567,6 @@ pub fn save_client_repository(
 
                     if !repo_exists {
                         // Insert repository
-                        println!("Repository with ID {} doesn't exist, creating it...", id);
                         tx.execute(
                             "INSERT INTO repositories (id, name) VALUES (?1, ?2)",
                             params![id, repo.name.as_ref().unwrap_or(&String::from("Unknown"))],
@@ -618,10 +617,6 @@ pub fn save_client_repository(
 
                                 if !repo_exists {
                                     // Insert repository
-                                    println!(
-                                        "Repository with ID {} doesn't exist, creating it...",
-                                        id
-                                    );
                                     tx.execute(
                                         "INSERT INTO repositories (id, name) VALUES (?1, ?2)",
                                         params![
