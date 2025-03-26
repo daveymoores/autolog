@@ -29,6 +29,8 @@ struct TimesheetDocument {
     user: Option<User>,
     approver: Option<Approver>,
     timesheets: Vec<Timesheet>,
+    approved: bool,
+    requires_approval: Option<bool>,
 }
 
 pub type TimesheetHoursForMonth = Vec<Map<String, Value>>;
@@ -82,6 +84,8 @@ fn build_document<'a>(
         client: repos.client.clone(),
         approver: repos.approver.clone(),
         timesheets: timesheets.to_owned(),
+        approved: false,
+        requires_approval: repos.requires_approval.clone(),
     }
 }
 
@@ -287,6 +291,8 @@ mod test {
             user: user.clone(),
             approver: approver.clone(),
             timesheets: timesheets.clone(),
+            approved: false,
+            requires_approval: Option::Some(false),
         };
 
         let generated_document = build_document(

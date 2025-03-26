@@ -688,7 +688,7 @@ pub fn save_client_repository(
                                         }
                                     }
                                 } else {
-                                    println!("DEBUG: No git log dates for repo {}", id);
+                                    println!("No git log dates for repo {}", id);
                                 }
 
                                 // Save timesheet if present
@@ -754,7 +754,7 @@ pub fn save_client_repository(
                                         }
                                     }
                                 } else {
-                                    println!("DEBUG: No timesheet for repo {}", id);
+                                    println!("No timesheet for repo {}", id);
                                 }
                             }
                         }
@@ -764,14 +764,8 @@ pub fn save_client_repository(
         }
 
         // IMPORTANT: Delete repositories that no longer exist in the client's repository list
-        for (repo_id, namespace) in existing_repos {
+        for (repo_id, _namespace) in existing_repos {
             if !current_repo_ids.contains(&repo_id) {
-                println!(
-                    "DEBUG: Removing repository '{}' (ID: {}) from database",
-                    namespace.unwrap_or_else(|| "unknown".to_string()),
-                    repo_id
-                );
-
                 // Delete timesheet entries for this repository
                 tx.execute(
                     "DELETE FROM timesheet_entries WHERE repository_id = ?",

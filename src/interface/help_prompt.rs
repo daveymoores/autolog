@@ -36,6 +36,7 @@ impl<'a> Onboarding for HelpPrompt<'a> {
             .search_for_repository_details(Option::None)?
             .add_client_details()?
             .specify_default_hours()?
+            .prompt_for_manager_approval()?
             .show_details();
         Ok(())
     }
@@ -537,13 +538,24 @@ impl<'a> HelpPrompt<'a> {
             if Confirm::new().default(true).interact()? {
                 Self::print_question("Approvers name");
                 let input: String = Input::new().interact_text()?;
+                if input.is_empty() {
+                    return Err("Approvers name cannot be empty".into());
+                }
                 self.client_repositories.set_approvers_name(input);
 
                 Self::print_question("Approvers email");
                 let input: String = Input::new().interact_text()?;
+                if input.is_empty() {
+                    return Err("Approvers email cannot be empty".into());
+                }
                 self.client_repositories.set_approvers_email(input);
 
-                // TODO - check the above are set before setting this
+                // get reference to approver name and email to check that it has been set
+                let (name, email) = self.client_repositories.get_approver();
+                if name.is_empty() || email.is_empty() {
+                    return Err("Approvers name and email cannot be empty".into());
+                }
+
                 self.client_repositories.set_requires_approval(true);
             } else {
                 self.client_repositories.set_requires_approval(false);
@@ -709,6 +721,16 @@ impl<'a> HelpPrompt<'a> {
                 client_address.clone().replace('\n', " "),
             ];
             data.append(&mut vec![row]);
+        }
+        if let Some(approver) = self.client_repositories().approver.as_ref() {
+            if let Some(approver_name) = approver.approvers_name.as_ref() {
+                let row = vec![Self::dim_text("Approver name:"), approver_name.clone()];
+                data.append(&mut vec![row]);
+            }
+            if let Some(approver_email) = approver.approvers_email.as_ref() {
+                let row = vec![Self::dim_text("Approver email:"), approver_email.clone()];
+                data.append(&mut vec![row]);
+            }
         }
 
         ascii_table.print(data);
