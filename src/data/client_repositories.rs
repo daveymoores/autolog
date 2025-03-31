@@ -241,6 +241,16 @@ impl ClientRepositories {
         self
     }
 
+    pub fn get_approver(&self) -> (&str, &str) {
+        match &self.approver {
+            Some(approver) => (
+                approver.approvers_name.as_deref().unwrap_or(""),
+                approver.approvers_email.as_deref().unwrap_or(""),
+            ),
+            None => ("", ""),
+        }
+    }
+
     pub fn set_user_email(&mut self, value: String) -> &mut Self {
         if let Some(user) = self.user.as_mut() {
             user.email = value;
