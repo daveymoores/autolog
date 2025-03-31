@@ -409,17 +409,10 @@ impl Make for Config {
             Self::set_prompt_with_found_values(prompt, found_repo, found_client_repo);
 
             if found_client_repo.is_some() {
-                prompt
-                    .add_project_numbers()
-                    .unwrap_or_else(|err| {
-                        eprintln!("Error parsing project number: {}", err);
-                        std::process::exit(exitcode::CANTCREAT);
-                    })
-                    .prompt_for_manager_approval()
-                    .unwrap_or_else(|err| {
-                        eprintln!("Error setting manager approval: {}", err);
-                        std::process::exit(exitcode::CANTCREAT);
-                    });
+                prompt.add_project_numbers().unwrap_or_else(|err| {
+                    eprintln!("Error parsing project number: {}", err);
+                    std::process::exit(exitcode::CANTCREAT);
+                });
 
                 // Generate autolog.dev link using existing config
                 link_builder::build_unique_uri(prompt.client_repositories(), options)

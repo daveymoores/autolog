@@ -434,7 +434,8 @@ fn init_schema(conn: &Connection) -> Result<()> {
     approvers_name TEXT,
     approvers_email TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (client_repository_id) REFERENCES client_repositories (id)
+    FOREIGN KEY (client_repository_id) REFERENCES client_repositories (id),
+    UNIQUE(client_repository_id)
     )",
         [],
     )
@@ -465,15 +466,15 @@ pub fn save_client_repository(
     // Save client if present
     if let Some(client) = &client_repo.client {
         tx.execute(
-      "INSERT OR REPLACE INTO clients (id, client_name, client_address, client_contact_person)
-      VALUES (?1, ?2, ?3, ?4)",
-      params![
-        client.id,
-        client.client_name,
-        client.client_address,
-        client.client_contact_person
-      ],
-    )?;
+            "INSERT OR REPLACE INTO clients (id, client_name, client_address, client_contact_person)
+            VALUES (?1, ?2, ?3, ?4)",
+            params![
+                client.id,
+                client.client_name,
+                client.client_address,
+                client.client_contact_person
+            ],
+        )?;
 
         // IMPORTANT: Get all existing repositories for this client
         let mut existing_repos = Vec::new();
@@ -492,7 +493,7 @@ pub fn save_client_repository(
         if let Some(user) = &client_repo.user {
             tx.execute(
                 "INSERT OR REPLACE INTO users (id, name, email, is_alias, thumbnail)
-        VALUES (?1, ?2, ?3, ?4, ?5)",
+                VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     user.id,
                     user.name,
@@ -509,7 +510,7 @@ pub fn save_client_repository(
             let client_repo_id: Option<i64> = tx
                 .query_row(
                     "SELECT id FROM client_repositories
-          WHERE client_id = ?1 AND user_id = ?2",
+                    WHERE client_id = ?1 AND user_id = ?2",
                     params![client.id, user.id],
                     |row| row.get(0),
                 )
@@ -519,8 +520,8 @@ pub fn save_client_repository(
                 // Update existing relation
                 tx.execute(
                     "UPDATE client_repositories
-          SET requires_approval = ?1
-          WHERE id = ?2",
+                    SET requires_approval = ?1
+                    WHERE id = ?2",
                     params![client_repo.requires_approval.unwrap_or(false) as i32, id],
                 )?;
                 id
@@ -528,7 +529,7 @@ pub fn save_client_repository(
                 // Insert new relation
                 tx.execute(
                     "INSERT INTO client_repositories (client_id, user_id, requires_approval)
-          VALUES (?1, ?2, ?3)",
+                    VALUES (?1, ?2, ?3)",
                     params![
                         client.id,
                         user.id,
@@ -540,15 +541,38 @@ pub fn save_client_repository(
 
             // Save approver if it exists
             if let Some(approver) = &client_repo.approver {
-                tx.execute(
-          "INSERT OR REPLACE INTO approvers (client_repository_id, approvers_name, approvers_email)
-          VALUES (?1, ?2, ?3)",
-          params![
-            client_repo_id,
-            approver.approvers_name,
-            approver.approvers_email
-          ],
-        )?;
+                // Check if approver already exists for this client_repository
+                let approver_exists: bool = tx
+                    .query_row(
+                        "SELECT 1 FROM approvers WHERE client_repository_id = ?1 LIMIT 1",
+                        params![client_repo_id],
+                        |_| Ok(true),
+                    )
+                    .unwrap_or(false);
+
+                if approver_exists {
+                    // Update existing approver
+                    tx.execute(
+                        "UPDATE approvers SET approvers_name = ?1, approvers_email = ?2
+                         WHERE client_repository_id = ?3",
+                        params![
+                            approver.approvers_name,
+                            approver.approvers_email,
+                            client_repo_id
+                        ],
+                    )?;
+                } else {
+                    // Insert new approver
+                    tx.execute(
+                        "INSERT INTO approvers (client_repository_id, approvers_name, approvers_email)
+                         VALUES (?1, ?2, ?3)",
+                        params![
+                            client_repo_id,
+                            approver.approvers_name,
+                            approver.approvers_email
+                        ],
+                    )?;
+                }
             }
         }
 
@@ -581,11 +605,11 @@ pub fn save_client_repository(
                     // Save repository
                     tx.execute(
                         "INSERT OR REPLACE INTO repositories (
-            id, namespace, namespace_alias, repo_path, git_path,
-            user_id, name, email, client_id, client_name,
-            client_contact_person, client_address, project_number,
-            service, service_username, default_hours
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                        id, namespace, namespace_alias, repo_path, git_path,
+                        user_id, name, email, client_id, client_name,
+                        client_contact_person, client_address, project_number,
+                        service, service_username, default_hours
+                        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                         params![
                             id,
                             repo.namespace,
@@ -606,158 +630,101 @@ pub fn save_client_repository(
                         ],
                     )?;
 
-                    if let Some(repositories) = &client_repo.repositories {
-                        for repo in repositories {
-                            if let Some(id) = &repo.id {
-                                current_repo_ids.push(id.clone());
-
-                                // Verify repository exists before proceeding
-                                let repo_exists: bool = tx
-                                    .query_row(
-                                        "SELECT 1 FROM repositories WHERE id = ?1 LIMIT 1",
-                                        params![id],
-                                        |_| Ok(true),
-                                    )
-                                    .unwrap_or(false);
-
-                                if !repo_exists {
-                                    // Insert repository
-                                    tx.execute(
-                                        "INSERT INTO repositories (id, name) VALUES (?1, ?2)",
-                                        params![
-                                            id,
-                                            repo.name.as_ref().unwrap_or(&String::from("Unknown"))
-                                        ],
-                                    )?;
-                                }
-
-                                // Save repository
-                                tx.execute(
-                            "INSERT OR REPLACE INTO repositories (
-                            id, namespace, namespace_alias, repo_path, git_path,
-                            user_id, name, email, client_id, client_name,
-                            client_contact_person, client_address, project_number,
-                            service, service_username, default_hours
-                            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-                            params![
-                              id,
-                              repo.namespace,
-                              repo.namespace_alias,
-                              repo.repo_path,
-                              repo.git_path,
-                              repo.user_id,
-                              repo.name,
-                              repo.email,
-                              repo.client_id,
-                              repo.client_name,
-                              repo.client_contact_person,
-                              repo.client_address,
-                              repo.project_number,
-                              repo.service,
-                              repo.service_username,
-                              repo.default_hours
-                            ],
-                          )?;
-
-                                // Save git log dates if present
-                                if let Some(git_log_dates) = &repo.git_log_dates {
-                                    for (&year, months) in git_log_dates.iter() {
-                                        // Insert year
-                                        tx.execute(
+                    // Save git log dates if present
+                    if let Some(git_log_dates) = &repo.git_log_dates {
+                        for (&year, months) in git_log_dates.iter() {
+                            // Insert year
+                            tx.execute(
                                 "INSERT OR REPLACE INTO git_log_years (repository_id, year)
                                 VALUES (?1, ?2)",
                                 params![id, year],
-                              )?;
-
-                                        for (&month, days) in months.iter() {
-                                            // Insert month
-                                            tx.execute(
-                                  "INSERT OR REPLACE INTO git_log_months (repository_id, year, month)
-                                  VALUES (?1, ?2, ?3)",
-                                  params![id, year, month],
-                                )?;
-
-                                            for &day in days.iter() {
-                                                // Insert day
-                                                tx.execute(
-                                    "INSERT OR REPLACE INTO git_log_days (repository_id, year, month, day)
-                                    VALUES (?1, ?2, ?3, ?4)",
-                                    params![id, year, month, day],
-                                  )?;
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    println!("No git log dates for repo {}", id);
-                                }
-
-                                // Save timesheet if present
-                                if let Some(timesheet) = &repo.timesheet {
-                                    // Prepare statement for efficiency
-                                    let mut stmt = tx.prepare(
-                              "INSERT OR REPLACE INTO timesheet_entries (
-                              repository_id, year, month, day, hours, weekend, user_edited, extra_data, updated_at
-                              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)",
                             )?;
 
-                                    for (year, months) in timesheet {
-                                        for (month, days) in months {
-                                            for (day_index, day_data) in days.iter().enumerate() {
-                                                let day = day_index + 1; // Convert 0-based index to 1-based day
+                            for (&month, days) in months.iter() {
+                                // Insert month
+                                tx.execute(
+                                    "INSERT OR REPLACE INTO git_log_months (repository_id, year, month)
+                                    VALUES (?1, ?2, ?3)",
+                                    params![id, year, month],
+                                )?;
 
-                                                // Extract common fields
-                                                let hours = day_data
-                                                    .get("hours")
-                                                    .and_then(|v| v.as_f64())
-                                                    .unwrap_or(0.0);
-
-                                                let weekend = day_data
-                                                    .get("weekend")
-                                                    .and_then(|v| v.as_bool())
-                                                    .unwrap_or(false);
-
-                                                let user_edited = day_data
-                                                    .get("user_edited")
-                                                    .and_then(|v| v.as_bool())
-                                                    .unwrap_or(false);
-
-                                                // Extract any additional fields as JSON
-                                                let mut extra_data = Map::new();
-                                                for (key, value) in day_data.iter() {
-                                                    if key != "hours"
-                                                        && key != "weekend"
-                                                        && key != "user_edited"
-                                                    {
-                                                        extra_data
-                                                            .insert(key.clone(), value.clone());
-                                                    }
-                                                }
-
-                                                let extra_json = if extra_data.is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(serde_json::to_string(&extra_data)?)
-                                                };
-
-                                                // Insert or update the entry
-                                                stmt.execute(params![
-                                                    id,
-                                                    year,
-                                                    month,
-                                                    day,
-                                                    hours,
-                                                    weekend as i32,
-                                                    user_edited as i32,
-                                                    extra_json
-                                                ])?;
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    println!("No timesheet for repo {}", id);
+                                for &day in days.iter() {
+                                    // Insert day
+                                    tx.execute(
+                                        "INSERT OR REPLACE INTO git_log_days (repository_id, year, month, day)
+                                        VALUES (?1, ?2, ?3, ?4)",
+                                        params![id, year, month, day],
+                                    )?;
                                 }
                             }
                         }
+                    } else {
+                        println!("No git log dates for repo {}", id);
+                    }
+
+                    // Save timesheet if present
+                    if let Some(timesheet) = &repo.timesheet {
+                        // Prepare statement for efficiency
+                        let mut stmt = tx.prepare(
+                            "INSERT OR REPLACE INTO timesheet_entries (
+                            repository_id, year, month, day, hours, weekend, user_edited, extra_data, updated_at
+                            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)",
+                        )?;
+
+                        for (year, months) in timesheet {
+                            for (month, days) in months {
+                                for (day_index, day_data) in days.iter().enumerate() {
+                                    let day = day_index + 1; // Convert 0-based index to 1-based day
+
+                                    // Extract common fields
+                                    let hours = day_data
+                                        .get("hours")
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(0.0);
+
+                                    let weekend = day_data
+                                        .get("weekend")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+
+                                    let user_edited = day_data
+                                        .get("user_edited")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+
+                                    // Extract any additional fields as JSON
+                                    let mut extra_data = Map::new();
+                                    for (key, value) in day_data.iter() {
+                                        if key != "hours"
+                                            && key != "weekend"
+                                            && key != "user_edited"
+                                        {
+                                            extra_data.insert(key.clone(), value.clone());
+                                        }
+                                    }
+
+                                    let extra_json = if extra_data.is_empty() {
+                                        None
+                                    } else {
+                                        Some(serde_json::to_string(&extra_data)?)
+                                    };
+
+                                    // Insert or update the entry
+                                    stmt.execute(params![
+                                        id,
+                                        year,
+                                        month,
+                                        day,
+                                        hours,
+                                        weekend as i32,
+                                        user_edited as i32,
+                                        extra_json
+                                    ])?;
+                                }
+                            }
+                        }
+                    } else {
+                        println!("No timesheet for repo {}", id);
                     }
                 }
             }
