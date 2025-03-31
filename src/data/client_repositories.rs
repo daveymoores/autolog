@@ -66,17 +66,23 @@ impl ClientRepositories {
     }
 
     pub fn set_values(&mut self, repository: &mut Repository) -> &mut Self {
-        self.client = Option::from(Client {
-            id: repository.client_id.clone().unwrap_or("None".to_string()),
-            client_name: repository.client_name.clone().unwrap_or("None".to_string()),
+        self.client = Some(Client {
+            id: repository
+                .client_id
+                .clone()
+                .unwrap_or_else(|| String::new()),
+            client_name: repository
+                .client_name
+                .clone()
+                .unwrap_or_else(|| String::new()),
             client_address: repository
                 .client_address
                 .clone()
-                .unwrap_or("None".to_string()),
+                .unwrap_or_else(|| String::new()),
             client_contact_person: repository
                 .client_contact_person
                 .clone()
-                .unwrap_or("None".to_string()),
+                .unwrap_or_else(|| String::new()),
         });
 
         let should_set_user = match self.user.as_ref() {
@@ -84,17 +90,29 @@ impl ClientRepositories {
             Some(user) => !user.is_alias,
         };
 
-        // if an alias hasn't been set, or there isn't a user yet, set the user from repo
+        // If an alias hasn't been set, or there isn't a user yet, set the user from repo
         if should_set_user {
-            self.user = Option::from(User {
-                id: repository.user_id.clone().unwrap_or("None".to_string()),
-                name: repository.name.clone().unwrap_or("None".to_string()),
-                email: repository.email.clone().unwrap_or("None".to_string()),
+            self.user = Some(User {
+                id: repository.user_id.clone().unwrap_or_else(|| String::new()),
+                name: repository.name.clone().unwrap_or_else(|| String::new()),
+                email: repository.email.clone().unwrap_or_else(|| String::new()),
                 is_alias: false,
-                thumbnail: Option::None,
+                thumbnail: None,
             });
         }
 
+        // Ensure repository has empty strings instead of None for relevant fields
+        if repository.client_address.is_none() {
+            repository.client_address = Some(String::new());
+        }
+        if repository.client_name.is_none() {
+            repository.client_name = Some(String::new());
+        }
+        if repository.client_contact_person.is_none() {
+            repository.client_contact_person = Some(String::new());
+        }
+
+        // Handle repositories collection
         match self.repositories.as_mut() {
             Some(repos) => {
                 let repo_exists = repos.iter().any(|r| r.id == repository.id);
@@ -147,21 +165,19 @@ impl ClientRepositories {
     }
 
     pub fn update_client_address(&mut self, value: String) -> &mut Self {
-        let client = self.client.as_mut();
-
-        if let Some(client) = client {
-            client.client_address.clone_from(&value)
+        if let Some(client) = self.client.as_mut() {
+            client.client_address.clone_from(&value);
         }
 
-        self.repositories.as_mut().map(|repos| {
-            repos
-                .iter_mut()
-                .map(|repo| {
-                    repo.client_address = Some(value.clone());
-                    repo
-                })
-                .collect::<Vec<&mut Repository>>()
-        });
+        if let Some(repos) = self.repositories.as_mut() {
+            for repo in repos {
+                repo.client_address = Some(if value.is_empty() {
+                    String::new()
+                } else {
+                    value.clone()
+                });
+            }
+        }
         self
     }
 
