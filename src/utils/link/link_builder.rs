@@ -73,19 +73,19 @@ fn build_document<'a>(
     timesheets: &'a [Timesheet],
     client_repositories: &'a ClientRepositories,
 ) -> TimesheetDocument {
-    let repos = client_repositories;
+    let client_repos = client_repositories;
     // When this is serialised, it can't take references to data
     // so make it all owned
     TimesheetDocument {
         creation_date,
         random_path: random_path.to_owned(),
         month_year: month_year_string.to_owned(),
-        user: repos.user.clone(),
-        client: repos.client.clone(),
-        approver: repos.approver.clone(),
+        user: client_repos.user.clone(),
+        client: client_repos.client.clone(),
+        approver: client_repos.approver.clone(),
         timesheets: timesheets.to_owned(),
         approved: false,
-        requires_approval: repos.requires_approval.clone(),
+        requires_approval: client_repos.requires_approval.clone(),
     }
 }
 
@@ -307,6 +307,7 @@ mod test {
                 repositories: Option::from(vec![Repository {
                     ..Default::default()
                 }]),
+                requires_approval: Option::Some(false),
                 ..Default::default()
             },
         );
