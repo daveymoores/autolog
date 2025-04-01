@@ -337,6 +337,7 @@ impl ClientRepositories {
                             git_log_dates.clone(),
                             &mut repositories[i],
                             adjacent_git_log_dates,
+                            i,
                         )
                     }
                     None => {
@@ -754,6 +755,6 @@ mod tests {
             .map(|day| day.get("hours").unwrap().clone().as_f64().unwrap())
             .collect::<Vec<f64>>();
 
-        assert_eq!(ts, vec![8.0, 4.0, 2.6666666666666665]);
+        assert_eq!(ts, vec![8.0, 4.0, 3.0]);
     }
 }

@@ -13,21 +13,31 @@ fn return_worked_hours_from_worked_days(
     day: &u32,
     adjacent_days_in_month: &[HashSet<u32>],
     default_hours: Option<f64>,
+    repo_index: usize,
 ) -> f64 {
-    let hours = if let Some(h) = default_hours { h } else { 8.0 };
-    // if day exists in adjacent days, then split the number of hours by number of occurrences
-    let frequency_of_day_worked_in_adjacent_timesheets: f64 = (adjacent_days_in_month
-        .iter()
-        .map(|month| month.get(day))
-        .filter(|e| e.is_some())
-        .collect::<Vec<Option<&u32>>>()
-        .len()
-        + 1) as f64;
+    if !worked_days.contains(day) {
+        return 0.0;
+    }
 
-    let worked_day = worked_days.contains(day);
-    match worked_day {
-        true => hours / frequency_of_day_worked_in_adjacent_timesheets,
-        false => 0.0,
+    let total_hours = if let Some(h) = default_hours { h } else { 8.0 };
+
+    let total_occurrences = adjacent_days_in_month
+        .iter()
+        .filter(|month| month.contains(day))
+        .count()
+        + 1;
+
+    if total_occurrences == 1 {
+        return total_hours;
+    }
+
+    let base_hours = (total_hours / total_occurrences as f64).floor();
+    let remaining_hours = total_hours - (base_hours * total_occurrences as f64);
+
+    if repo_index < remaining_hours as usize {
+        base_hours + 1.0
+    } else {
+        base_hours
     }
 }
 
@@ -63,6 +73,7 @@ fn parse_hours_from_date(
     worked_days: Vec<u32>,
     repository: &mut Repository,
     adjacent_days_in_month: Vec<HashSet<u32>>,
+    repo_index: usize,
 ) -> Vec<Map<String, Value>> {
     // iterate through the number of days in the month
     // for each day return the calendar day
@@ -77,6 +88,7 @@ fn parse_hours_from_date(
             &day,
             &adjacent_days_in_month,
             repository.default_hours,
+            repo_index,
         );
 
         // Each day denotes whether it is a Weekend, what the hours worked are
@@ -162,6 +174,7 @@ pub fn get_timesheet_map_from_date_hashmap(
     git_log_dates: GitLogDates,
     repository: &mut Repository,
     adjacent_git_log_dates: Vec<GitLogDates>,
+    repo_index: usize,
 ) -> TimesheetYears {
     let timesheet_years: TimesheetYears = git_log_dates
         .into_iter()
@@ -184,6 +197,7 @@ pub fn get_timesheet_map_from_date_hashmap(
                         worked_days,
                         repository,
                         adjacent_days_in_month,
+                        repo_index,
                     );
                     (month.to_string(), worked_hours_for_month)
                 })
@@ -281,7 +295,8 @@ mod tests {
                 &vec![1, 3, 6, 22],
                 &2,
                 &adjacent_days_in_month,
-                Option::None
+                Option::None,
+                1
             ),
             0.0
         );
@@ -290,7 +305,8 @@ mod tests {
                 &vec![1, 3, 6, 22],
                 &22,
                 &adjacent_days_in_month,
-                Option::None
+                Option::None,
+                1
             ),
             8.0
         );
@@ -299,7 +315,8 @@ mod tests {
                 &vec![1, 3, 4, 22],
                 &4,
                 &adjacent_days_in_month,
-                Option::None
+                Option::None,
+                1
             ),
             4.0
         );
@@ -308,9 +325,10 @@ mod tests {
                 &vec![1, 3, 4, 22],
                 &3,
                 &adjacent_days_in_month,
-                Option::None
+                Option::None,
+                1
             ),
-            2.6666666666666665
+            3.0
         );
     }
 
@@ -355,6 +373,7 @@ mod tests {
             vec![1, 4, 6],
             &mut Default::default(),
             adjacent_days_in_month,
+            1,
         );
 
         assert_eq!(
@@ -450,5 +469,67 @@ mod tests {
         assert!(check_for_valid_year(&Option::from("1998".to_string())).is_ok());
         assert!(check_for_valid_year(&Option::from("2020".to_string())).is_ok());
         assert!(check_for_valid_year(&Option::from("2099".to_string())).is_ok());
+    }
+
+    #[test]
+    fn it_distributes_hours_evenly_with_integer_values() {
+        let adjacent_days_in_month = vec![HashSet::from([1, 2]), HashSet::from([1, 3])];
+        assert_eq!(
+            return_worked_hours_from_worked_days(
+                &vec![1, 2, 3],
+                &1,
+                &adjacent_days_in_month,
+                Option::None,
+                0 // First repository
+            ),
+            3.0
+        );
+        assert_eq!(
+            return_worked_hours_from_worked_days(
+                &vec![1, 2, 3],
+                &1,
+                &adjacent_days_in_month,
+                Option::None,
+                1 // Second repository
+            ),
+            3.0
+        );
+        assert_eq!(
+            return_worked_hours_from_worked_days(
+                &vec![1, 2, 3],
+                &1,
+                &adjacent_days_in_month,
+                Option::None,
+                2 // Third repository
+            ),
+            2.0
+        );
+
+        let adjacent_days_in_month = vec![
+            HashSet::from([5]),
+            HashSet::from([5]),
+            HashSet::from([5]),
+            HashSet::from([5]),
+        ];
+        assert_eq!(
+            return_worked_hours_from_worked_days(
+                &vec![5, 10, 15],
+                &5,
+                &adjacent_days_in_month,
+                Option::None,
+                0 // First repository
+            ),
+            2.0
+        );
+        assert_eq!(
+            return_worked_hours_from_worked_days(
+                &vec![5, 10, 15],
+                &5,
+                &adjacent_days_in_month,
+                Option::None,
+                4 // Fifth repository
+            ),
+            1.0
+        );
     }
 }
