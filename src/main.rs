@@ -1,7 +1,6 @@
 use std::process;
 mod config;
 mod data;
-mod db;
 mod helpers;
 mod interface;
 mod utils;

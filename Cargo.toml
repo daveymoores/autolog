@@ -32,6 +32,8 @@ anyhow = "1.0.97"
 directories = "6.0.0"
 sha2 = "0.10.8"
 semver = "1.0"
+reqwest = { version = "0.12.15", features = ["json", "blocking"] }
+rand = "0.9.0"
 
 [dev-dependencies]
 assert_cmd = "2.0.2"

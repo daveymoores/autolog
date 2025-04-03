@@ -5,7 +5,6 @@ pub mod link;
 
 use dialoguer::Confirm;
 use dotenv::dotenv;
-use random_string::generate;
 use std::env;
 use std::error::Error;
 use std::process::Output;
@@ -47,11 +46,6 @@ pub fn trim_output_from_utf8(output: Output) -> Result<String, Box<dyn std::erro
     Ok(x)
 }
 
-pub fn generate_random_path() -> String {
-    let charset = "0123456789abcdefghijklmnopqrstuvwxyz";
-    generate(10, charset)
-}
-
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
@@ -88,15 +82,5 @@ mod tests {
         };
 
         assert_eq!(trim_output_from_utf8(output_path).unwrap(), "Davey Moores");
-    }
-
-    #[test]
-    fn it_generates_a_random_string() {
-        let random_string = generate_random_path();
-        let regex = regex::Regex::new(r"^[a-z0-9]{10}$");
-        match regex.unwrap().find(&*random_string) {
-            Some(_x) => assert!(true),
-            None => panic!("Pattern not matched"),
-        }
     }
 }
