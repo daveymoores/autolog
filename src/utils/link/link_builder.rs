@@ -1,11 +1,12 @@
 use crate::data::client_repositories::{Approver, Client, ClientRepositories, User};
 use crate::data::repository::Repository;
-use crate::db;
 use crate::utils::date::date_parser::{check_for_valid_month, check_for_valid_year};
 use chrono::{DateTime, Month, Utc};
 use dotenv;
 use mongodb::bson::doc;
 use num_traits::cast::FromPrimitive;
+use rand::distr::Alphanumeric;
+use rand::{Rng, rng};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::error::Error;
@@ -143,6 +144,17 @@ fn generate_timesheet_vec(
     Ok(timesheets)
 }
 
+// Function to generate a random path string
+fn generate_random_path(length: usize) -> Result<String, Box<dyn Error>> {
+    let random_string: String = rng()
+        .sample_iter(&Alphanumeric)
+        .take(length)
+        .map(char::from)
+        .collect();
+
+    Ok(random_string)
+}
+
 pub async fn build_unique_uri(
     client_repositories: &mut ClientRepositories,
     options: Vec<Option<String>>,
@@ -155,17 +167,21 @@ pub async fn build_unique_uri(
         &month_year_string,
     );
 
-    let mongodb_db = env!("MONGODB_DB");
-    let mongodb_collection = env!("MONGODB_COLLECTION");
+    let expire_time_seconds: i32 = env!("EXPIRE_TIME_SECONDS")
+        .parse()
+        .expect("Expire time can't be parsed to i32");
 
-    let db = db::Db::new().await?;
-    let collection = db
-        .client
-        .database(mongodb_db)
-        .collection(mongodb_collection);
+    // API connection details
+    let api_endpoint = env!("API_ENDPOINT");
+    let api_key = env!("API_ROUTE_BEARER_KEY");
+    let autolog_uri = env!("AUTOLOG_URI");
+    let api_route = format!("{}/{}", autolog_uri, api_endpoint);
 
-    let random_path: String = db.generate_random_path(&collection).await?;
+    let random_path = generate_random_path(16)?;
+
     client_repositories.fetch_user_thumbnail();
+
+    // Use your existing build_document function with the generated path
     let document = build_document(
         Utc::now(),
         &random_path,
@@ -174,37 +190,30 @@ pub async fn build_unique_uri(
         &client_repositories,
     );
 
-    // Check for existing index for TTL on the collection
-    let index_names = collection.list_index_names().await?;
+    // Create a client to make the HTTP request
+    let client = reqwest::Client::new();
 
-    let expire_time_seconds: i32 = env!("EXPIRE_TIME_SECONDS")
-        .parse()
-        .expect("Expire time can't be parsed to i32");
+    // Send the document to the API
+    let response = client
+        .get(api_route)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&document)
+        .send()
+        .await?;
 
-    if !index_names.contains(&String::from("expiration_date")) {
-        // create TTL index to expire documents after expire_time_seconds
-        db.client
-            .database(mongodb_db)
-            .run_command(
-                doc! {
-                    "createIndexes": &mongodb_collection,
-                    "indexes": [
-                        {
-                            "key": { "creation_date": 1 },
-                            "name": "expiration_date",
-                            "expireAfterSeconds": expire_time_seconds,
-                        },
-                    ]
-                },
-                None,
-            )
-            .await?;
+    // Check if the request was successful
+    if !response.status().is_success() {
+        // First store the status in a variable before moving the response
+        let status = response.status();
+        let error_text = response.text().await?;
+        return Err(format!("API request failed: {} - {}", status, error_text).into());
     }
 
-    collection.insert_one(document.clone(), None).await?;
-
+    // Format the URL exactly as in your original code
     let timesheet_gen_uri: String = format!("{}/{}", env!("AUTOLOG_URI"), &random_path);
 
+    // Use your existing function to display the URL
     crate::interface::help_prompt::HelpPrompt::show_new_link_success(
         expire_time_seconds / 60,
         &timesheet_gen_uri,

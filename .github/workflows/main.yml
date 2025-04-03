@@ -7,11 +7,12 @@ on:
   pull_request:
 
 env:
-  MONGODB_URI: ${{ secrets.MONGODB_URI }}
   AUTOLOG_URI: ${{ secrets.AUTOLOG_URI }}
   MONGODB_DB: ${{ secrets.MONGODB_DB }}
   EXPIRE_TIME_SECONDS: ${{ secrets.EXPIRE_TIME_SECONDS }}
   MONGODB_COLLECTION: ${{ secrets.MONGODB_COLLECTION }}
+  API_ROUTE_BEARER_KEY: ${{ secrets.API_ROUTE_BEARER_KEY }}
+  API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
   TEST_MODE: ${{ secrets.TEST_MODE }}
 
 jobs:
