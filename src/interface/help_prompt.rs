@@ -531,7 +531,7 @@ impl<'a> HelpPrompt<'a> {
             println!(
                 "{}",
                 Self::dim_text(
-                    "(This will enable signing functionality, see https://autolog.dev/docs/signing)",
+                    "(This will enable signing functionality, see https://autolog.dev/documentation#approvals)",
                 )
             );
 
